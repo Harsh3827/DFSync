@@ -1,184 +1,200 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
 #include <fcntl.h>
-#include <dirent.h>
+#include <errno.h>
 
-#define PORT 5001
-#define BUFFER_SIZE 4096
+#define PORT 8001
+#define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 
-void forward_file(const char* filename, const char* dest_path, int dest_port) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in server_addr;
-    char buffer[BUFFER_SIZE];
-    
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(dest_port);
-    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+void create_path_if_not_exist(const char *path)
+{
+    char temp[512];
+    strcpy(temp, path);
+    char *p = temp + 1; // skip first slash
+    while ((p = strchr(p, '/')) != NULL)
+    {
+        *p = '\0';
+        mkdir(temp, 0777);
+        *p = '/';
+        p++;
+    }
+    mkdir(temp, 0777); // Create final directory
+}
+void get_s1_folder_path(char *base_path)
+{
+    char cwd[512];
+    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    {
+        snprintf(base_path, 512, "%s/S1_folder", cwd);
+        mkdir(base_path, 0777); // ensure S1_folder exists
+    }
+    else
+    {
+        perror("getcwd() error");
+        exit(1);
+    }
+}
 
-    if(connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Forward connection failed");
+void sanitize_path(char *resolved_path, const char *raw_path, const char *base_dir)
+{
+    if (strncmp(raw_path, "~S1/", 4) == 0)
+    {
+        snprintf(resolved_path, 512, "%s/%s", base_dir, raw_path + 4);
+    }
+    else
+    {
+        snprintf(resolved_path, 512, "%s", raw_path);
+    }
+}
+
+void upload_handler(int client_socket, char *filename, char *dest_path)
+{
+    char *ext = strrchr(filename, '.');
+    if (!ext)
+    {
+        printf("Invalid file extension.\n");
         return;
     }
 
-    snprintf(buffer, BUFFER_SIZE, "uploadf %s %s", filename, dest_path);
-    send(sock, buffer, strlen(buffer), 0);
+    // Receive file size
+    int filesize;
+    recv(client_socket, &filesize, sizeof(int), 0);
+    printf("Receiving file: %s (%d bytes)\n", filename, filesize);
 
-    FILE* file = fopen(filename, "rb");
-    if(file) {
-        while(!feof(file)) {
-            size_t bytes = fread(buffer, 1, BUFFER_SIZE, file);
-            if(bytes > 0) {
-                send(sock, buffer, bytes, 0);
-            }
-        }
-        fclose(file);
-        unlink(filename);
-    }
-    close(sock);
-}
-
-void handle_upload(char* filename, char* dest_path, int client_socket) {
-    char* ext = strrchr(filename, '.');
-    char buffer[BUFFER_SIZE];
     char full_path[512];
-    
-    snprintf(full_path, sizeof(full_path), "~/S1/%s", dest_path);
-    mkdir(full_path, 0777);
 
-    FILE* file = fopen(filename, "wb");
-    if(file) {
-        int bytes_received;
-        while((bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0)) > 0) {
-            fwrite(buffer, 1, bytes_received, file);
-        }
-        fclose(file);
+    if (strcmp(ext, ".c") == 0)
+    {
+        // Save in ~/S1/...
+        snprintf(full_path, sizeof(full_path), "%s/%s", dest_path, filename);
+        create_path_if_not_exist(dest_path);
 
-        if(strcmp(ext, ".pdf") == 0) {
-            forward_file(filename, dest_path, 8002);
-        } else if(strcmp(ext, ".txt") == 0) {
-            forward_file(filename, dest_path, 8003);
-        } else if(strcmp(ext, ".zip") == 0) {
-            forward_file(filename, dest_path, 8004);
+        FILE *fp = fopen(full_path, "wb");
+        if (fp == NULL)
+        {
+            perror("File open failed");
+            return;
         }
-        
-        send(client_socket, "File uploaded successfully", 25, 0);
+
+        int bytes_received, total_received = 0;
+        char buffer[BUFFER_SIZE];
+        while (total_received < filesize)
+        {
+            bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0);
+            fwrite(buffer, 1, bytes_received, fp);
+            total_received += bytes_received;
+        }
+
+        fclose(fp);
+        printf("File saved to %s\n", full_path);
+    }
+    else
+    {
+        // Save temporarily, then forward to S2/S3/S4 (to be implemented)
+        // We'll just print for now
+        printf("Forwarding %s to appropriate server based on extension\n", filename);
+        // In final version: Connect to S2/S3/S4 and send filename, dest_path, and file data
     }
 }
 
-void handle_download(char* filename, int client_socket) {
-    char* ext = strrchr(filename, '.');
+void prcclient(int client_socket)
+{
     char buffer[BUFFER_SIZE];
-    FILE* file;
+    char command[20], filename[256], path[512];
 
-    if(strcmp(ext, ".c") == 0) {
-        file = fopen(filename, "rb");
-    } else {
-        // Request file from appropriate server
-        int server_port = 0;
-        if(strcmp(ext, ".pdf") == 0) server_port = 8002;
-        else if(strcmp(ext, ".txt") == 0) server_port = 8003;
-        else if(strcmp(ext, ".zip") == 0) server_port = 8004;
-
-        int server_sock = socket(AF_INET, SOCK_STREAM, 0);
-        struct sockaddr_in server_addr;
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(server_port);
-        server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-        connect(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
-        snprintf(buffer, BUFFER_SIZE, "downlf %s", filename);
-        send(server_sock, buffer, strlen(buffer), 0);
-
-        file = fopen("temp_file", "wb");
-        while((recv(server_sock, buffer, BUFFER_SIZE, 0)) > 0) {
-            fwrite(buffer, 1, strlen(buffer), file);
-        }
-        fclose(file);
-        close(server_sock);
-        file = fopen("temp_file", "rb");
-    }
-
-    if(file) {
-        while(!feof(file)) {
-            size_t bytes = fread(buffer, 1, BUFFER_SIZE, file);
-            if(bytes > 0) {
-                send(client_socket, buffer, bytes, 0);
-            }
-        }
-        fclose(file);
-        if(strcmp(ext, ".c") != 0) unlink("temp_file");
-    }
-}
-
-void prcclient(int client_socket) {
-    char buffer[BUFFER_SIZE];
-    char command[20];
-    char arg1[256];
-    char arg2[512];
-
-    while(1) {
+    while (1)
+    {
         memset(buffer, 0, BUFFER_SIZE);
         int bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0);
-        
-        if(bytes_received <= 0) break;
-
-        sscanf(buffer, "%s %s %s", command, arg1, arg2);
-
-        if(strcmp(command, "uploadf") == 0) {
-            handle_upload(arg1, arg2, client_socket);
-        } else if(strcmp(command, "downlf") == 0) {
-            handle_download(arg1, client_socket);
+        if (bytes_received <= 0)
+        {
+            break;
         }
-        // Add other commands here
+
+        sscanf(buffer, "%s %s %s", command, filename, path);
+
+        // Get dynamic S1 folder path
+        char base_path[512];
+        get_s1_folder_path(base_path);
+
+        // Resolve ~S1/... to actual full folder path
+        char dest_path[512];
+        sanitize_path(dest_path, path, base_path);
+
+        if (strcmp(command, "uploadf") == 0)
+        {
+            upload_handler(client_socket, filename, dest_path);
+        }
+        else
+        {
+            printf("Received unknown command: %s\n", buffer);
+            send(client_socket, "Unknown command", 15, 0);
+        }
     }
 }
 
-int main() {
+int main()
+{
     int server_socket, client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_size;
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if(server_socket < 0) {
+
+    if (server_socket < 0)
+    {
         perror("Socket creation failed");
         exit(1);
     }
+    int opt = 1;
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    if(bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
         perror("Binding failed");
         exit(1);
     }
 
-    if(listen(server_socket, MAX_CLIENTS) == 0) {
+    if (listen(server_socket, MAX_CLIENTS) == 0)
+    {
         printf("S1 Server listening on port %d\n", PORT);
-    } else {
+    }
+    else
+    {
         perror("Listen failed");
         exit(1);
     }
 
-    while(1) {
+    while (1)
+    {
         addr_size = sizeof(client_addr);
-        client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &addr_size);
+        client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &addr_size);
+        if (client_socket < 0)
+        {
+            perror("Accept failed");
+            continue;
+        }
 
-        if(fork() == 0) {
+        if (fork() == 0)
+        {
             close(server_socket);
             prcclient(client_socket);
             exit(0);
         }
+
         close(client_socket);
     }
 
