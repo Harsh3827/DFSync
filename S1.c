@@ -5,52 +5,140 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/stat.h>
 #include <fcntl.h>
-#include <errno.h>
+#include <dirent.h>
 
-#define PORT 8001
-#define BUFFER_SIZE 1024
+#define PORT 5001
+#define BUFFER_SIZE 4096
 #define MAX_CLIENTS 10
+
+void forward_file(const char* filename, const char* dest_path, int dest_port) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in server_addr;
+    char buffer[BUFFER_SIZE];
+    
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(dest_port);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if(connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Forward connection failed");
+        return;
+    }
+
+    snprintf(buffer, BUFFER_SIZE, "uploadf %s %s", filename, dest_path);
+    send(sock, buffer, strlen(buffer), 0);
+
+    FILE* file = fopen(filename, "rb");
+    if(file) {
+        while(!feof(file)) {
+            size_t bytes = fread(buffer, 1, BUFFER_SIZE, file);
+            if(bytes > 0) {
+                send(sock, buffer, bytes, 0);
+            }
+        }
+        fclose(file);
+        unlink(filename);
+    }
+    close(sock);
+}
+
+void handle_upload(char* filename, char* dest_path, int client_socket) {
+    char* ext = strrchr(filename, '.');
+    char buffer[BUFFER_SIZE];
+    char full_path[512];
+    
+    snprintf(full_path, sizeof(full_path), "~/S1/%s", dest_path);
+    mkdir(full_path, 0777);
+
+    FILE* file = fopen(filename, "wb");
+    if(file) {
+        int bytes_received;
+        while((bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0)) > 0) {
+            fwrite(buffer, 1, bytes_received, file);
+        }
+        fclose(file);
+
+        if(strcmp(ext, ".pdf") == 0) {
+            forward_file(filename, dest_path, 8002);
+        } else if(strcmp(ext, ".txt") == 0) {
+            forward_file(filename, dest_path, 8003);
+        } else if(strcmp(ext, ".zip") == 0) {
+            forward_file(filename, dest_path, 8004);
+        }
+        
+        send(client_socket, "File uploaded successfully", 25, 0);
+    }
+}
+
+void handle_download(char* filename, int client_socket) {
+    char* ext = strrchr(filename, '.');
+    char buffer[BUFFER_SIZE];
+    FILE* file;
+
+    if(strcmp(ext, ".c") == 0) {
+        file = fopen(filename, "rb");
+    } else {
+        // Request file from appropriate server
+        int server_port = 0;
+        if(strcmp(ext, ".pdf") == 0) server_port = 8002;
+        else if(strcmp(ext, ".txt") == 0) server_port = 8003;
+        else if(strcmp(ext, ".zip") == 0) server_port = 8004;
+
+        int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+        struct sockaddr_in server_addr;
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(server_port);
+        server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+        connect(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+        snprintf(buffer, BUFFER_SIZE, "downlf %s", filename);
+        send(server_sock, buffer, strlen(buffer), 0);
+
+        file = fopen("temp_file", "wb");
+        while((recv(server_sock, buffer, BUFFER_SIZE, 0)) > 0) {
+            fwrite(buffer, 1, strlen(buffer), file);
+        }
+        fclose(file);
+        close(server_sock);
+        file = fopen("temp_file", "rb");
+    }
+
+    if(file) {
+        while(!feof(file)) {
+            size_t bytes = fread(buffer, 1, BUFFER_SIZE, file);
+            if(bytes > 0) {
+                send(client_socket, buffer, bytes, 0);
+            }
+        }
+        fclose(file);
+        if(strcmp(ext, ".c") != 0) unlink("temp_file");
+    }
+}
 
 void prcclient(int client_socket) {
     char buffer[BUFFER_SIZE];
     char command[20];
-    char filename[256];
-    char dest_path[512];
+    char arg1[256];
+    char arg2[512];
 
     while(1) {
         memset(buffer, 0, BUFFER_SIZE);
         int bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0);
         
-        if(bytes_received <= 0) {
-            break;
-        }
+        if(bytes_received <= 0) break;
 
-        sscanf(buffer, "%s %s %s", command, filename, dest_path);
+        sscanf(buffer, "%s %s %s", command, arg1, arg2);
 
         if(strcmp(command, "uploadf") == 0) {
-            // Handle file upload based on extension
-            char *ext = strrchr(filename, '.');
-            if(ext != NULL) {
-                if(strcmp(ext, ".c") == 0) {
-                    // Store locally
-                    // Implementation for storing .c files
-                } else if(strcmp(ext, ".pdf") == 0) {
-                    // Forward to S2
-                    // Implementation for forwarding .pdf files
-                } else if(strcmp(ext, ".txt") == 0) {
-                    // Forward to S3
-                    // Implementation for forwarding .txt files
-                } else if(strcmp(ext, ".zip") == 0) {
-                    // Forward to S4
-                    // Implementation for forwarding .zip files
-                }
-            }
+            handle_upload(arg1, arg2, client_socket);
+        } else if(strcmp(command, "downlf") == 0) {
+            handle_download(arg1, client_socket);
         }
-        // Add implementations for other commands
+        // Add other commands here
     }
 }
 

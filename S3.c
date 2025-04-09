@@ -7,9 +7,36 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
-#define PORT 8003
+#define PORT 5003
 #define BUFFER_SIZE 1024
+
+void handle_upload(int client_socket, const char* filename, const char* dest_path) {
+    char full_path[512];
+    snprintf(full_path, sizeof(full_path), "~/S3/%s/%s", dest_path, filename);
+    
+    // Create directory if it doesn't exist
+    char dir_path[512];
+    snprintf(dir_path, sizeof(dir_path), "~/S3/%s", dest_path);
+    mkdir(dir_path, 0777);
+
+    FILE* file = fopen(full_path, "wb");
+    if(file == NULL) {
+        perror("File creation failed");
+        return;
+    }
+
+    char buffer[BUFFER_SIZE];
+    int bytes_received;
+    while((bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0)) > 0) {
+        fwrite(buffer, 1, bytes_received, file);
+    }
+
+    fclose(file);
+    printf("File %s received and stored\n", filename);
+}
 
 int main() {
     int server_socket, client_socket;
@@ -43,11 +70,18 @@ int main() {
         addr_size = sizeof(client_addr);
         client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &addr_size);
         
-        // Handle TXT file operations
         char buffer[BUFFER_SIZE];
+        char command[20];
+        char filename[256];
+        char dest_path[512];
+
         recv(client_socket, buffer, BUFFER_SIZE, 0);
-        // Implementation for TXT file operations
-        
+        sscanf(buffer, "%s %s %s", command, filename, dest_path);
+
+        if(strcmp(command, "uploadf") == 0) {
+            handle_upload(client_socket, filename, dest_path);
+        }
+
         close(client_socket);
     }
 
