@@ -107,6 +107,26 @@ void upload_handler(int client_socket, char *filename, char *dest_path)
     }
 }
 
+void handle_remove(int client_socket, char *filepath)
+{
+    // filepath is expected to be like "~S1/folder1/folder2/sample.txt"
+    char base_path[512];
+    get_s3_folder_path(base_path);
+    char resolved_path[512];
+    sanitize_path(resolved_path, filepath, base_path);
+    if(remove(resolved_path) == 0)
+    {
+        printf("Removed file %s\n", resolved_path);
+        send(client_socket, "File removed from S3 successfully", 33, 0);
+    }
+    else
+    {
+        perror("Error removing file");
+        send(client_socket, "Error removing file from S3", 28, 0);
+    }
+}
+
+
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -131,6 +151,10 @@ void prcclient(int client_socket)
             sanitize_path(dest_path, path, base_path);
             
             upload_handler(client_socket, filename, dest_path);
+        }
+        else if(strcmp(command, "removef") == 0)
+        {
+            handle_remove(client_socket, filename);
         }
         else
         {

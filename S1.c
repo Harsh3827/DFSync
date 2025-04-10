@@ -10,7 +10,7 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define PORT 8001
+#define PORT 6666
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 #define SERVER_PORT_2 8002
@@ -266,6 +266,67 @@ void upload_handler(int client_socket, char *filename, char *dest_path, char com
     }
 }
 
+//---------- New Remove Functionality ----------
+void remove_handler(int client_socket, char *filepath)
+{
+    // filepath is expected to be like "~S1/folder1/folder2/sample.ext"
+    char *ext = strrchr(filepath, '.');
+    if(!ext)
+    {
+        printf("Invalid file extension in remove command.\n");
+        send(client_socket, "Invalid file extension", 22, 0);
+        return;
+    }
+    char base_path[512];
+    get_s1_folder_path(base_path);
+    char resolved_path[512];
+    sanitize_path(resolved_path, filepath, base_path);
+    
+    if(strcmp(ext, ".c") == 0)
+    {
+        if(remove(resolved_path) == 0)
+        {
+            printf("Removed file %s\n", resolved_path);
+            send(client_socket, "File removed successfully", 26, 0);
+        }
+        else
+        {
+            perror("Error removing file");
+            send(client_socket, "Error removing file", 20, 0);
+        }
+    }
+    else if(strcmp(ext, ".pdf") == 0)
+    {
+        int sock = connect_to_server(SERVER_PORT_2);
+        char remove_command[BUFFER_SIZE];
+        snprintf(remove_command, BUFFER_SIZE, "removef %s", filepath);
+        send(sock, remove_command, strlen(remove_command), 0);
+        char response[BUFFER_SIZE];
+        memset(response, 0, BUFFER_SIZE);
+        recv(sock, response, BUFFER_SIZE, 0);
+        printf("S2 response: %s\n", response);
+        close(sock);
+        send(client_socket, response, strlen(response), 0);
+    }
+    else if(strcmp(ext, ".txt") == 0)
+    {
+        int sock = connect_to_server(SERVER_PORT_3);
+        char remove_command[BUFFER_SIZE];
+        snprintf(remove_command, BUFFER_SIZE, "removef %s", filepath);
+        send(sock, remove_command, strlen(remove_command), 0);
+        char response[BUFFER_SIZE];
+        memset(response, 0, BUFFER_SIZE);
+        recv(sock, response, BUFFER_SIZE, 0);
+        printf("S3 response: %s\n", response);
+        close(sock);
+        send(client_socket, response, strlen(response), 0);
+    }
+    else
+    {
+        send(client_socket, "Unsupported file type for remove", 33, 0);
+    }
+}
+
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -293,6 +354,11 @@ void prcclient(int client_socket)
         if (strcmp(command, "uploadf") == 0)
         {
             upload_handler(client_socket, filename, dest_path, buffer);
+        }
+        else if(strcmp(command, "removef") == 0)
+        {
+            // For removef, the second token is the full filepath.
+            remove_handler(client_socket, filename);
         }
         else
         {

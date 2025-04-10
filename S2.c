@@ -29,7 +29,7 @@ void create_path_if_not_exist(const char *path)
     }
     mkdir(temp, 0777); // Create final directory
 }
-void get_s1_folder_path(char *base_path)
+void get_s2_folder_path(char *base_path)
 {
     char cwd[512];
     if (getcwd(cwd, sizeof(cwd)) != NULL)
@@ -104,6 +104,25 @@ void upload_handler(int client_socket, char *filename, char *dest_path)
     }
 }
 
+void handle_remove(int client_socket, char *filepath)
+{
+    // filepath should be like "~S1/folder1/folder2/sample.pdf"
+    char base_path[512];
+    get_s2_folder_path(base_path);
+    char resolved_path[512];
+    sanitize_path(resolved_path, filepath, base_path);
+    if(remove(resolved_path) == 0)
+    {
+        printf("Removed file %s\n", resolved_path);
+        send(client_socket, "File removed from S2 successfully", 33, 0);
+    }
+    else
+    {
+        perror("Error removing file");
+        send(client_socket, "Error removing file from S2", 28, 0);
+    }
+}
+
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -122,7 +141,7 @@ void prcclient(int client_socket)
 
         // Get dynamic S1 folder path
         char base_path[512];
-        get_s1_folder_path(base_path);
+        get_s2_folder_path(base_path);
 
         // Resolve ~S1/... to actual full folder path
         char dest_path[512];
@@ -131,6 +150,10 @@ void prcclient(int client_socket)
         if (strcmp(command, "uploadf") == 0)
         {
             upload_handler(client_socket, filename, dest_path);
+        }
+        else if(strcmp(command, "removef") == 0)
+        {
+            handle_remove(client_socket, filename);
         }
         else
         {

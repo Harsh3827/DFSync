@@ -7,7 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#define SERVER_PORT 8001
+#define SERVER_PORT 6666
 #define BUFFER_SIZE 1024
 #define MAX_ARGS 5
 #define MAX_COMMAND_LENGTH 256
@@ -82,12 +82,18 @@ void upload_file(int sock, const char *file_name, const char *destination_path)
     }
 
     fclose(fp);
-    printf("File '%s' uploaded.\n", file_name);
+    printf("File '%s' uploaded successfully.\n", file_name);
 }
 
 int main()
 {
     int sock = connect_to_server();
+
+    // Print welcome banner
+    printf("============================================\n");
+    printf("   Welcome to the Distributed File System   \n");
+    printf("             Client (w25clients)            \n");
+    printf("============================================\n");
 
     char command[BUFFER_SIZE];
     while (1)
@@ -98,6 +104,7 @@ int main()
 
         if (strcmp(command, "exit") == 0)
         {
+            printf("Exiting w25clients. Goodbye!\n");
             break;
         }
 
@@ -115,9 +122,17 @@ int main()
             }
             upload_file(sock, command_array[1], command_array[2]);
         }
+        else if (strcmp(command_array[0], "removef") == 0)
+        {
+            // For removef, send the command as is to S1.
+            send(sock, command, strlen(command), 0);
+            memset(command, 0, sizeof(command));
+            recv(sock, command, sizeof(command), 0);
+            printf("S1 response: %s\n", command);
+        }
         else
         {
-            // Send the entire command as is for other operations
+            // For any other commands, send to S1.
             send(sock, command, strlen(command), 0);
             memset(command, 0, sizeof(command));
             recv(sock, command, sizeof(command), 0);
