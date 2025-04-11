@@ -7,7 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#define SERVER_PORT 6666
+#define SERVER_PORT 8001
 #define BUFFER_SIZE 1024
 #define MAX_ARGS 5
 #define MAX_COMMAND_LENGTH 256
@@ -34,7 +34,20 @@ int connect_to_server()
 
     return sock;
 }
-
+void get_Client_PWD(char *base_path)
+{
+    char cwd[512];
+    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    {
+        snprintf(base_path, 512, "%s/", cwd);
+        mkdir(base_path, 0777); // ensure S1_folder exists
+    }
+    else
+    {
+        perror("getcwd() error");
+        exit(1);
+    }
+}
 void parse_commands(char *input, char *args[MAX_ARGS], const char *separator)
 {
     int counter = 0;
@@ -46,7 +59,22 @@ void parse_commands(char *input, char *args[MAX_ARGS], const char *separator)
     }
     args[counter] = NULL;
 }
+void get_actual_filename(const char *file_path, char *basename_buffer, size_t buffer_size)
+{
+    const char *basename = strrchr(file_path, '/');
+    if (basename)
+    {
+        basename++; // Skip the '/'
+    }
+    else
+    {
+        basename = file_path;
+    }
 
+    // Copy the basename to the provided buffer
+    strncpy(basename_buffer, basename, buffer_size);
+    basename_buffer[buffer_size - 1] = '\0'; // Ensure null termination
+}
 void upload_file(int sock, const char *file_name, const char *destination_path)
 {
     FILE *fp = fopen(file_name, "rb");
@@ -83,6 +111,61 @@ void upload_file(int sock, const char *file_name, const char *destination_path)
 
     fclose(fp);
     printf("File '%s' uploaded successfully.\n", file_name);
+}
+void download_file(int sock, char buffer[])
+{
+    // Send the download command to S1
+    send(sock, buffer, strlen(buffer), 0);
+
+    // Receive file size
+    int filesize;
+    recv(sock, &filesize, sizeof(int), 0);
+
+    if (filesize <= 0)
+    {
+        printf("Error: File not found or empty\n");
+        return;
+    }
+
+    // Extract filename from the file path
+    char command[20], file_path[512];
+    sscanf(buffer, "%s %s", command, file_path);
+
+    // Get the basename from the path
+    char basename[256];
+    get_actual_filename(file_path, basename, sizeof(basename));
+
+    printf("Receiving file: %s (%d bytes)\n", basename, filesize);
+
+    // printf("Receiving file: %s (%d bytes)\n", basename, filesize);
+
+    // Save the file in client's current directory
+    char local_filepath[512];
+    snprintf(local_filepath, sizeof(local_filepath), "%s", basename);
+
+    FILE *fp = fopen(local_filepath, "wb");
+    if (fp == NULL)
+    {
+        perror("File open failed");
+        return;
+    }
+
+    // Receive and save file content
+    char recv_buffer[BUFFER_SIZE];
+    int bytes_received, total_received = 0;
+
+    while (total_received < filesize)
+    {
+        bytes_received = recv(sock, recv_buffer, BUFFER_SIZE, 0);
+        if (bytes_received <= 0)
+            break;
+
+        fwrite(recv_buffer, 1, bytes_received, fp);
+        total_received += bytes_received;
+    }
+
+    fclose(fp);
+    printf("File downloaded successfully to: %s\n", local_filepath);
 }
 
 int main()
@@ -121,6 +204,16 @@ int main()
                 continue;
             }
             upload_file(sock, command_array[1], command_array[2]);
+        }
+        else if (strcmp(command_array[0], "downlf") == 0)
+        {
+            if (command_array[1] == NULL)
+            {
+                printf("Usage: downlf <filename along with path>\n");
+                continue;
+            }
+
+            download_file(sock, command);
         }
         else if (strcmp(command_array[0], "removef") == 0)
         {

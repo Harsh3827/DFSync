@@ -10,7 +10,7 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define PORT 6666
+#define PORT 8001
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 #define SERVER_PORT_2 8002
@@ -175,59 +175,6 @@ void upload_handler(int client_socket, char *filename, char *dest_path, char com
     }
     else if (strcmp(ext, ".pdf") == 0) // Note the "== 0" for equality
     {
-        // // Connect to S2
-        // int sock = connect_to_server(SERVER_PORT_2);
-        // if (sock < 0)
-        // {
-        //     printf("Failed to connect to S2\n");
-        //     return;
-        // }
-
-        // // Forward the command
-        // send(sock, command, strlen(command), 0);
-        // usleep(100000); // Delay for safety
-
-        // // Forward file size
-        // send(sock, &filesize, sizeof(int), 0);
-        // usleep(100000);
-
-        // // Receive and forward the entire file
-        // char buffer[BUFFER_SIZE];
-        // int bytes_received, total_received = 0;
-
-        // while (total_received < filesize)
-        // {
-        //     bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0);
-        //     if (bytes_received <= 0)
-        //     {
-        //         printf("Error receiving file from client\n");
-        //         close(sock);
-        //         return;
-        //     }
-
-        //     // Forward data to S2
-        //     int sent = send(sock, buffer, bytes_received, 0);
-        //     if (sent < bytes_received)
-        //     {
-        //         printf("Error forwarding data to S2\n");
-        //         close(sock);
-        //         return;
-        //     }
-
-        //     total_received += bytes_received;
-        // }
-
-        // // Get confirmation from S2
-        // char response[BUFFER_SIZE];
-        // memset(response, 0, BUFFER_SIZE);
-        // recv(sock, response, BUFFER_SIZE, 0);
-        // printf("S2 response: %s\n", response);
-
-        // // Close connection to S2
-        // close(sock);
-
-        // // Inform client that the upload was successful
-        // send(client_socket, "File uploaded successfully", 26, 0);
 
         int sock = connect_to_server(SERVER_PORT_2);
         if (sock < 0)
@@ -265,13 +212,138 @@ void upload_handler(int client_socket, char *filename, char *dest_path, char com
         printf("Forwarding %s to appropriate server based on extension\n", filename);
     }
 }
-
-//---------- New Remove Functionality ----------
-void remove_handler(int client_socket, char *filepath)
+void download_request_forwader(int server_socket, char buffer[], int client_socket, char *servername)
 {
-    // filepath is expected to be like "~S1/folder1/folder2/sample.ext"
-    char *ext = strrchr(filepath, '.');
-    if(!ext)
+
+    send(server_socket, buffer, strlen(buffer), 0);
+    char response[BUFFER_SIZE];
+    memset(response, 0, BUFFER_SIZE);
+
+    int filesize;
+    recv(server_socket, &filesize, sizeof(int), 0);
+    printf("Receiving file: %s (%d bytes)\n", "prerakshah", filesize);
+    // Send file size
+    send(client_socket, &filesize, sizeof(int), 0);
+    usleep(100000);
+
+    char input_buffer[filesize];
+    int bytes_received, total_received = 0;
+
+    while (total_received < filesize)
+    {
+        bytes_received = recv(server_socket, input_buffer, BUFFER_SIZE, 0);
+        if (bytes_received <= 0)
+        {
+            printf("Error receiving file from W25client\n");
+            close(server_socket);
+            return;
+        }
+
+        // Forward data to specific server
+        int sent = send(client_socket, input_buffer, bytes_received, 0);
+        if (sent < bytes_received)
+        {
+            printf("Error forwarding data to %s\n", servername);
+            close(server_socket);
+            return;
+        }
+
+        total_received += bytes_received;
+    }
+
+    printf("%s response: %s\n", servername, response);
+    close(server_socket);
+    send(client_socket, response, strlen(response), 0);
+}
+void download_handler(int client_socket, char buffer[])
+{
+    char command[20], file_path[512];
+    sscanf(buffer, "%s %s", command, file_path);
+
+    char *ext = strrchr(file_path, '.');
+    if (!ext)
+    {
+        printf("Invalid file extension in download command.\n");
+        send(client_socket, "Invalid file extension", 22, 0);
+        return;
+    }
+
+    char base_path[512];
+    get_s1_folder_path(base_path);
+    char resolved_path[512];
+    sanitize_path(resolved_path, file_path, base_path);
+
+    if (strcmp(ext, ".c") == 0)
+    {
+        // For .c files stored locally
+        FILE *fp = fopen(resolved_path, "rb");
+        if (fp == NULL)
+        {
+            printf("Cannot open file %s\n", resolved_path);
+            send(client_socket, &(int){0}, sizeof(int), 0);
+            return;
+        }
+
+        // Get file size
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+
+        // Send file size
+        send(client_socket, &filesize, sizeof(int), 0);
+        usleep(100000);
+
+        // Send file content
+        char filebuffer[BUFFER_SIZE];
+        int bytes;
+        while ((bytes = fread(filebuffer, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, filebuffer, bytes, 0);
+        }
+
+        fclose(fp);
+        printf("File '%s' sent to client successfully.\n", resolved_path);
+    }
+    else if (strcmp(ext, ".pdf") == 0)
+    {
+        int sock = connect_to_server(SERVER_PORT_2);
+        download_request_forwader(sock, buffer, client_socket, "S2");
+    }
+    else if (strcmp(ext, ".txt") == 0)
+    {
+        int sock = connect_to_server(SERVER_PORT_3);
+        download_request_forwader(sock, buffer, client_socket, "S3");
+    }
+    else if (strcmp(ext, ".zip") == 0)
+    {
+        int sock = connect_to_server(SERVER_PORT_4);
+        download_request_forwader(sock, buffer, client_socket, "S4");
+    }
+    else
+    {
+        printf("Unsupported file extension: %s\n", ext);
+        send(client_socket, &(int){0}, sizeof(int), 0); // Send 0 size to indicate error
+    }
+}
+
+void remove_request_forwader(int sock, char buffer[], int client_socket, char *servername)
+{
+
+    send(sock, buffer, strlen(buffer), 0);
+    char response[BUFFER_SIZE];
+    memset(response, 0, BUFFER_SIZE);
+    recv(sock, response, BUFFER_SIZE, 0);
+    printf("%s response: %s\n", servername, response);
+    close(sock);
+    send(client_socket, response, strlen(response), 0);
+}
+//---------- New Remove Functionality ----------
+void remove_handler(int client_socket, char buffer[])
+{
+    char command[20], filename[256], file_path[512];
+    sscanf(buffer, "%s %s", command, file_path);
+    char *ext = strrchr(file_path, '.');
+    if (!ext)
     {
         printf("Invalid file extension in remove command.\n");
         send(client_socket, "Invalid file extension", 22, 0);
@@ -280,11 +352,11 @@ void remove_handler(int client_socket, char *filepath)
     char base_path[512];
     get_s1_folder_path(base_path);
     char resolved_path[512];
-    sanitize_path(resolved_path, filepath, base_path);
-    
-    if(strcmp(ext, ".c") == 0)
+    sanitize_path(resolved_path, file_path, base_path);
+
+    if (strcmp(ext, ".c") == 0)
     {
-        if(remove(resolved_path) == 0)
+        if (remove(resolved_path) == 0)
         {
             printf("Removed file %s\n", resolved_path);
             send(client_socket, "File removed successfully", 26, 0);
@@ -295,31 +367,15 @@ void remove_handler(int client_socket, char *filepath)
             send(client_socket, "Error removing file", 20, 0);
         }
     }
-    else if(strcmp(ext, ".pdf") == 0)
+    else if (strcmp(ext, ".pdf") == 0)
     {
         int sock = connect_to_server(SERVER_PORT_2);
-        char remove_command[BUFFER_SIZE];
-        snprintf(remove_command, BUFFER_SIZE, "removef %s", filepath);
-        send(sock, remove_command, strlen(remove_command), 0);
-        char response[BUFFER_SIZE];
-        memset(response, 0, BUFFER_SIZE);
-        recv(sock, response, BUFFER_SIZE, 0);
-        printf("S2 response: %s\n", response);
-        close(sock);
-        send(client_socket, response, strlen(response), 0);
+        remove_request_forwader(sock, buffer, client_socket, "S2");
     }
-    else if(strcmp(ext, ".txt") == 0)
+    else if (strcmp(ext, ".txt") == 0)
     {
         int sock = connect_to_server(SERVER_PORT_3);
-        char remove_command[BUFFER_SIZE];
-        snprintf(remove_command, BUFFER_SIZE, "removef %s", filepath);
-        send(sock, remove_command, strlen(remove_command), 0);
-        char response[BUFFER_SIZE];
-        memset(response, 0, BUFFER_SIZE);
-        recv(sock, response, BUFFER_SIZE, 0);
-        printf("S3 response: %s\n", response);
-        close(sock);
-        send(client_socket, response, strlen(response), 0);
+        remove_request_forwader(sock, buffer, client_socket, "S3");
     }
     else
     {
@@ -341,7 +397,8 @@ void prcclient(int client_socket)
             break;
         }
 
-        sscanf(buffer, "%s %s %s", command, filename, path);
+        sscanf(buffer, "%s", command);
+        // sscanf(buffer, "%s %s %s", command, filename, path);
 
         // Get dynamic S1 folder path
         char base_path[512];
@@ -349,16 +406,22 @@ void prcclient(int client_socket)
 
         // Resolve ~S1/... to actual full folder path
         char dest_path[512];
-        sanitize_path(dest_path, path, base_path);
+        // sanitize_path(dest_path, path, base_path);
 
         if (strcmp(command, "uploadf") == 0)
         {
+            sscanf(buffer, "%s %s %s", command, filename, path);
+            sanitize_path(dest_path, path, base_path);
             upload_handler(client_socket, filename, dest_path, buffer);
         }
-        else if(strcmp(command, "removef") == 0)
+        else if (strcmp(command, "downlf") == 0)
         {
-            // For removef, the second token is the full filepath.
-            remove_handler(client_socket, filename);
+            // printf("this is inside the download");
+            download_handler(client_socket, buffer);
+        }
+        else if (strcmp(command, "removef") == 0)
+        {
+            remove_handler(client_socket, buffer);
         }
         else
         {

@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#define SERVER_PORT 8003    // S3 listens on port 8003
+#define SERVER_PORT 8003 // S3 listens on port 8003
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 
@@ -66,27 +66,27 @@ void upload_handler(int client_socket, char *filename, char *dest_path)
         printf("Invalid file extension.\n");
         return;
     }
-    
+
     // Receive the file size.
     int filesize;
     recv(client_socket, &filesize, sizeof(int), 0);
     printf("Receiving file: %s (%d bytes)\n", filename, filesize);
-    
+
     char full_path[512];
-    
+
     if (strcmp(ext, ".txt") == 0)
     {
         // Construct the full path where the file will be stored.
         snprintf(full_path, sizeof(full_path), "%s/%s", dest_path, filename);
         create_path_if_not_exist(dest_path);
-        
+
         FILE *fp = fopen(full_path, "wb");
         if (fp == NULL)
         {
             perror("File open failed");
             return;
         }
-        
+
         int bytes_received, total_received = 0;
         char buffer[BUFFER_SIZE];
         while (total_received < filesize)
@@ -114,7 +114,7 @@ void handle_remove(int client_socket, char *filepath)
     get_s3_folder_path(base_path);
     char resolved_path[512];
     sanitize_path(resolved_path, filepath, base_path);
-    if(remove(resolved_path) == 0)
+    if (remove(resolved_path) == 0)
     {
         printf("Removed file %s\n", resolved_path);
         send(client_socket, "File removed from S3 successfully", 33, 0);
@@ -126,33 +126,106 @@ void handle_remove(int client_socket, char *filepath)
     }
 }
 
+void download_request_forwader(int sock, char buffer[], int client_socket, char *servername)
+{
 
+    send(sock, buffer, strlen(buffer), 0);
+    char response[BUFFER_SIZE];
+    memset(response, 0, BUFFER_SIZE);
+    recv(sock, response, BUFFER_SIZE, 0);
+    printf("%s response: %s\n", servername, response);
+    close(sock);
+    send(client_socket, response, strlen(response), 0);
+}
+void download_handler(int client_socket, char buffer[])
+{
+    char command[20], file_path[512];
+    sscanf(buffer, "%s %s", command, file_path);
+
+    char *ext = strrchr(file_path, '.');
+    if (!ext)
+    {
+        printf("Invalid file extension in download command.\n");
+        send(client_socket, "Invalid file extension", 22, 0);
+        return;
+    }
+
+    char base_path[512];
+    get_s3_folder_path(base_path);
+    char resolved_path[512];
+    sanitize_path(resolved_path, file_path, base_path);
+
+    // printf("Download request for file: %s\n", resolved_path);
+
+    if (strcmp(ext, ".txt") == 0)
+    {
+        // For .c files stored locally
+        FILE *fp = fopen(resolved_path, "rb");
+        if (fp == NULL)
+        {
+            printf("Cannot open file %s\n", resolved_path);
+            send(client_socket, &(int){0}, sizeof(int), 0); // Send 0 size to indicate error
+            return;
+        }
+
+        // Get file size
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+
+        // Send file size
+        send(client_socket, &filesize, sizeof(int), 0);
+        usleep(100000);
+
+        // Send file content
+        char filebuffer[BUFFER_SIZE];
+        int bytes;
+        while ((bytes = fread(filebuffer, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, filebuffer, bytes, 0);
+        }
+
+        fclose(fp);
+        printf("File '%s' sent to S1 successfully.\n", resolved_path);
+    }
+
+    else
+    {
+        printf("Unsupported file extension: %s\n", ext);
+        send(client_socket, &(int){0}, sizeof(int), 0); // Send 0 size to indicate error
+    }
+}
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
     char command[20], filename[256], path[512];
-    
+
     while (1)
     {
         memset(buffer, 0, BUFFER_SIZE);
         int bytes_received = recv(client_socket, buffer, BUFFER_SIZE, 0);
         if (bytes_received <= 0)
             break;
-        
+
         // Parse the full command line received from S1.
         sscanf(buffer, "%s %s %s", command, filename, path);
-        
+
         if (strcmp(command, "uploadf") == 0)
         {
             char base_path[512];
             get_s3_folder_path(base_path);
-            
+
             char dest_path[512];
             sanitize_path(dest_path, path, base_path);
-            
+
             upload_handler(client_socket, filename, dest_path);
         }
-        else if(strcmp(command, "removef") == 0)
+        else if (strcmp(command, "downlf") == 0)
+        {
+            // printf("this is inside the download");
+            download_handler(client_socket, buffer);
+        }
+        else if (strcmp(command, "removef") == 0)
         {
             handle_remove(client_socket, filename);
         }
@@ -169,7 +242,7 @@ int main()
     int server_socket, client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_size;
-    
+
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0)
     {
@@ -178,12 +251,12 @@ int main()
     }
     int opt = 1;
     setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    
+
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(SERVER_PORT);
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    
+
     if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
         perror("Binding failed");
@@ -198,7 +271,7 @@ int main()
         perror("Listen failed");
         exit(1);
     }
-    
+
     while (1)
     {
         addr_size = sizeof(client_addr);
@@ -216,6 +289,6 @@ int main()
         }
         close(client_socket);
     }
-    
+
     return 0;
 }

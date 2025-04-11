@@ -111,7 +111,7 @@ void handle_remove(int client_socket, char *filepath)
     get_s2_folder_path(base_path);
     char resolved_path[512];
     sanitize_path(resolved_path, filepath, base_path);
-    if(remove(resolved_path) == 0)
+    if (remove(resolved_path) == 0)
     {
         printf("Removed file %s\n", resolved_path);
         send(client_socket, "File removed from S2 successfully", 33, 0);
@@ -122,7 +122,72 @@ void handle_remove(int client_socket, char *filepath)
         send(client_socket, "Error removing file from S2", 28, 0);
     }
 }
+void download_request_forwader(int sock, char buffer[], int client_socket, char *servername)
+{
 
+    send(sock, buffer, strlen(buffer), 0);
+    char response[BUFFER_SIZE];
+    memset(response, 0, BUFFER_SIZE);
+    recv(sock, response, BUFFER_SIZE, 0);
+    printf("%s response: %s\n", servername, response);
+    close(sock);
+    send(client_socket, response, strlen(response), 0);
+}
+void download_handler(int client_socket, char buffer[])
+{
+    char command[20], file_path[512];
+    sscanf(buffer, "%s %s", command, file_path);
+
+    char *ext = strrchr(file_path, '.');
+    if (!ext)
+    {
+        printf("Invalid file extension in download command.\n");
+        send(client_socket, "Invalid file extension", 22, 0);
+        return;
+    }
+
+    char base_path[512];
+    get_s2_folder_path(base_path);
+    char resolved_path[512];
+    sanitize_path(resolved_path, file_path, base_path);
+
+    if (strcmp(ext, ".pdf") == 0)
+    {
+        // For .c files stored locally
+        FILE *fp = fopen(resolved_path, "rb");
+        if (fp == NULL)
+        {
+            printf("Cannot open file %s\n", resolved_path);
+            send(client_socket, &(int){0}, sizeof(int), 0); // Send 0 size to indicate error
+            return;
+        }
+
+        // Get file size
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+
+        // Send file size
+        send(client_socket, &filesize, sizeof(int), 0);
+        usleep(100000);
+
+        // Send file content
+        char filebuffer[BUFFER_SIZE];
+        int bytes;
+        while ((bytes = fread(filebuffer, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, filebuffer, bytes, 0);
+        }
+
+        fclose(fp);
+        printf("File '%s' sent to S1 successfully.\n", resolved_path);
+    }
+    else
+    {
+        printf("Unsupported file extension: %s\n", ext);
+        send(client_socket, &(int){0}, sizeof(int), 0); // Send 0 size to indicate error
+    }
+}
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -151,7 +216,12 @@ void prcclient(int client_socket)
         {
             upload_handler(client_socket, filename, dest_path);
         }
-        else if(strcmp(command, "removef") == 0)
+        else if (strcmp(command, "downlf") == 0)
+        {
+            // printf("this is inside the download");
+            download_handler(client_socket, buffer);
+        }
+        else if (strcmp(command, "removef") == 0)
         {
             handle_remove(client_socket, filename);
         }
