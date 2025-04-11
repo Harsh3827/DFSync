@@ -188,6 +188,10 @@ void download_handler(int client_socket, char buffer[])
         send(client_socket, &(int){0}, sizeof(int), 0); // Send 0 size to indicate error
     }
 }
+
+
+
+
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -225,6 +229,48 @@ void prcclient(int client_socket)
         {
             handle_remove(client_socket, filename);
         }
+        // Inside S2.c prcclient(), after processing "uploadf" and "removef":
+else if(strcmp(command, "downltar") == 0)
+{
+    // Expect command format: downltar .pdf
+    char filetype[16];
+    sscanf(buffer, "%s %s", command, filetype);
+    if(strcmp(filetype, ".pdf") == 0)
+    {
+        // Create tar archive for PDFs in S2_folder:
+        char s2folder[512];
+        get_s2_folder_path(s2folder);
+        char tarCommand[1024];
+        snprintf(tarCommand, sizeof(tarCommand),
+            "find %s -type f -name '*.pdf' | tar -cf pdf.tar -T -", s2folder);
+        system(tarCommand);
+        // Now send pdf.tar to the client:
+        FILE *fp = fopen("pdf.tar", "rb");
+        if(fp == NULL)
+        {
+            perror("Failed to open pdf.tar");
+            send(client_socket, "Error creating tar file", 25, 0);
+            continue;
+        }
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+        send(client_socket, &filesize, sizeof(int), 0);
+        char bufferTar[BUFFER_SIZE];
+        int bytes;
+        while((bytes = fread(bufferTar, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, bufferTar, bytes, 0);
+        }
+        fclose(fp);
+        remove("pdf.tar");
+        printf("Tar file pdf.tar sent successfully from S2.\n");
+    }
+    else
+    {
+        send(client_socket, "Unsupported file type for downltar", 35, 0);
+    }
+}
         else
         {
             printf("Received unknown command: %s\n", buffer);

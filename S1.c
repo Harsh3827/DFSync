@@ -15,7 +15,7 @@
 #define MAX_CLIENTS 10
 #define SERVER_PORT_2 8002
 #define SERVER_PORT_3 8003
-#define SERVER_PORT_4 8004
+#define SERVER_PORT_4 8005
 
 int connect_to_server(int SERVER_PORT)
 {
@@ -383,6 +383,88 @@ void remove_handler(int client_socket, char buffer[])
     }
 }
 
+void downltar_handler(int client_socket, char *buffer)
+{
+    // buffer is the full command, e.g., "downltar .c"
+    char command[20], filetype[16];
+    sscanf(buffer, "%s %s", command, filetype);
+    if(strcmp(filetype, ".c") == 0)
+    {
+        // Create tar file of all .c files in S1_folder
+        char s1folder[512];
+        get_s1_folder_path(s1folder);
+        char tarCommand[1024];
+        snprintf(tarCommand, sizeof(tarCommand),
+                 "find %s -type f -name '*.c' | tar -cf cfiles.tar -T -", s1folder);
+        system(tarCommand);
+        // Open and send cfiles.tar to client
+        FILE *fp = fopen("cfiles.tar", "rb");
+        if(fp == NULL)
+        {
+            perror("Failed to open tar file");
+            send(client_socket, "Error creating tar file", 25, 0);
+            return;
+        }
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+        send(client_socket, &filesize, sizeof(int), 0);
+        char filebuffer[BUFFER_SIZE];
+        int bytes;
+        while((bytes = fread(filebuffer, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, filebuffer, bytes, 0);
+        }
+        fclose(fp);
+        remove("cfiles.tar");
+        printf("Tar file cfiles.tar sent successfully.\n");
+    }
+    else if(strcmp(filetype, ".pdf") == 0)
+    {
+        // Forward downltar command to S2
+        int sock = connect_to_server(SERVER_PORT_2);
+        send(sock, buffer, strlen(buffer), 0);
+        int filesize;
+        recv(sock, &filesize, sizeof(int), 0);
+        send(client_socket, &filesize, sizeof(int), 0);
+        char filebuffer[BUFFER_SIZE];
+        int bytes, totalReceived = 0;
+        while(totalReceived < filesize)
+        {
+            bytes = recv(sock, filebuffer, BUFFER_SIZE, 0);
+            if(bytes <= 0) break;
+            send(client_socket, filebuffer, bytes, 0);
+            totalReceived += bytes;
+        }
+        close(sock);
+        printf("Tar file (pdf.tar) received from S2 and forwarded to client.\n");
+    }
+    else if(strcmp(filetype, ".txt") == 0)
+    {
+        // Forward downltar command to S3
+        int sock = connect_to_server(SERVER_PORT_3);
+        send(sock, buffer, strlen(buffer), 0);
+        int filesize;
+        recv(sock, &filesize, sizeof(int), 0);
+        send(client_socket, &filesize, sizeof(int), 0);
+        char filebuffer[BUFFER_SIZE];
+        int bytes, totalReceived = 0;
+        while(totalReceived < filesize)
+        {
+            bytes = recv(sock, filebuffer, BUFFER_SIZE, 0);
+            if(bytes <= 0) break;
+            send(client_socket, filebuffer, bytes, 0);
+            totalReceived += bytes;
+        }
+        close(sock);
+        printf("Tar file (text.tar) received from S3 and forwarded to client.\n");
+    }
+    else
+    {
+        send(client_socket, "Unsupported file type for downltar", 35, 0);
+    }
+}
+
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -422,6 +504,10 @@ void prcclient(int client_socket)
         else if (strcmp(command, "removef") == 0)
         {
             remove_handler(client_socket, buffer);
+        }
+        else if (strcmp(command, "downltar") == 0)
+        {
+            downltar_handler(client_socket, buffer);
         }
         else
         {

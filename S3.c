@@ -126,6 +126,49 @@ void handle_remove(int client_socket, char *filepath)
     }
 }
 
+// New tar_handler for downltar command for text files
+void tar_handler(int client_socket, char *file_type)
+{
+    if (strcmp(file_type, ".txt") == 0)
+    {
+        char s3folder[512];
+        get_s3_folder_path(s3folder);
+        char tar_filename[64] = "text.tar";
+        char tarCommand[1024];
+        // Create a tar archive (text.tar) of all .txt files in S3_folder.
+        snprintf(tarCommand, sizeof(tarCommand),
+                 "find %s -type f -name '*.txt' | tar -cf %s -T -", s3folder, tar_filename);
+        system(tarCommand);
+
+        // Open and send the tar archive
+        FILE *fp = fopen(tar_filename, "rb");
+        if (fp == NULL)
+        {
+            perror("Failed to open tar file");
+            send(client_socket, "Error creating tar file", 25, 0);
+            return;
+        }
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+        send(client_socket, &filesize, sizeof(int), 0);
+        usleep(100000);
+        char buffer[BUFFER_SIZE];
+        int bytes;
+        while ((bytes = fread(buffer, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, buffer, bytes, 0);
+        }
+        fclose(fp);
+        remove(tar_filename);
+        printf("Tar file text.tar sent successfully from S3.\n");
+    }
+    else
+    {
+        send(client_socket, "Unsupported file type for downltar", 35, 0);
+    }
+}
+
 void download_request_forwader(int sock, char buffer[], int client_socket, char *servername)
 {
 
@@ -229,6 +272,48 @@ void prcclient(int client_socket)
         {
             handle_remove(client_socket, filename);
         }
+        // Inside S3.c prcclient(), add after processing other commands:
+else if(strcmp(command, "downltar") == 0)
+{
+    // Expect command format: downltar .txt
+    char filetype[16];
+    sscanf(buffer, "%s %s", command, filetype);
+    if(strcmp(filetype, ".txt") == 0)
+    {
+        // Create tar archive for text files in S3_folder:
+        char s3folder[512];
+        get_s3_folder_path(s3folder);
+        char tarCommand[1024];
+        snprintf(tarCommand, sizeof(tarCommand),
+                 "find %s -type f -name '*.txt' | tar -cf text.tar -T -", s3folder);
+        system(tarCommand);
+        // Open and send text.tar to the client:
+        FILE *fp = fopen("text.tar", "rb");
+        if(fp == NULL)
+        {
+            perror("Failed to open text.tar");
+            send(client_socket, "Error creating tar file", 25, 0);
+            continue;
+        }
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+        send(client_socket, &filesize, sizeof(int), 0);
+        char bufferTar[BUFFER_SIZE];
+        int bytes;
+        while((bytes = fread(bufferTar, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, bufferTar, bytes, 0);
+        }
+        fclose(fp);
+        remove("text.tar");
+        printf("Tar file text.tar sent successfully from S3.\n");
+    }
+    else
+    {
+        send(client_socket, "Unsupported file type for downltar", 35, 0);
+    }
+}
         else
         {
             printf("Received unknown command: %s\n", buffer);

@@ -10,7 +10,7 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define SERVER_PORT 8004 // S4 listens on port 8004
+#define SERVER_PORT 8005 // S4 listens on port 8004
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 
