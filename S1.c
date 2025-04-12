@@ -15,7 +15,7 @@
 #define MAX_CLIENTS 10
 #define SERVER_PORT_2 8002
 #define SERVER_PORT_3 8003
-#define SERVER_PORT_4 8005
+#define SERVER_PORT_4 8004
 
 int connect_to_server(int SERVER_PORT)
 {
@@ -69,6 +69,124 @@ void get_s1_folder_path(char *base_path)
     }
 }
 
+int check_path_exists(const char *path)
+{
+    struct stat path_stat;
+    // Check if path exists using stat
+    if (stat(path, &path_stat) != 0)
+    {
+        return 0;
+    }
+    // Check if it's a directory
+    if (S_ISDIR(path_stat.st_mode))
+    {
+        return 2;
+    }
+    return 1;
+}
+
+char *list_all_files(const char *path, const char *extension, char *result, size_t result_size)
+{
+    char command[1024];
+    // Clear the result buffer
+    memset(result, 0, result_size);
+
+    // Validate inputs
+    if (path == NULL || result == NULL || result_size <= 0)
+    {
+        return NULL;
+    }
+
+    // Check if directory exists
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+    {
+        return NULL;
+    }
+
+    // Build the find command
+    if (extension != NULL)
+    {
+        // Filter by extension
+        snprintf(command, sizeof(command),
+                 "find \"%s\" -type f -name \"*%s\"",
+                 path, extension);
+    }
+    else
+    {
+        // All files
+        snprintf(command, sizeof(command),
+                 "find \"%s\" -type f",
+                 path);
+    }
+    // Execute the command
+    FILE *fp = popen(command, "r");
+    if (fp == NULL)
+    {
+        perror("popen failed");
+        return NULL;
+    }
+    // Store all filenames in an array for sorting
+    char filenames[1000][256]; // Support up to 1000 files
+    int file_count = 0;
+    char line[1024];
+    // Read each line and extract the filename
+    while (fgets(line, sizeof(line), fp) != NULL && file_count < 1000)
+    {
+        // Remove newline character
+        line[strcspn(line, "\n")] = 0;
+
+        // Extract just the filename (not the full path)
+        const char *filename = strrchr(line, '/');
+        if (filename)
+        {
+            filename++; // Skip the '/'
+        }
+        else
+        {
+            filename = line;
+        }
+        // Store the filename
+        strncpy(filenames[file_count], filename, 255);
+        filenames[file_count][255] = '\0'; // Ensure null termination
+        file_count++;
+    }
+    pclose(fp);
+    // Sort the filenames using a simple bubble sort
+    for (int i = 0; i < file_count - 1; i++)
+    {
+        for (int j = 0; j < file_count - i - 1; j++)
+        {
+            if (strcasecmp(filenames[j], filenames[j + 1]) > 0)
+            {
+                // Swap filenames
+                char temp[256];
+                strcpy(temp, filenames[j]);
+                strcpy(filenames[j], filenames[j + 1]);
+                strcpy(filenames[j + 1], temp);
+            }
+        }
+    }
+    // Now add the sorted filenames to the result
+    size_t current_size = 0;
+    for (int i = 0; i < file_count; i++)
+    {
+        size_t needed = strlen(filenames[i]) + 1; // +1 for newline
+
+        // Check if we have enough space left in the buffer
+        if (current_size + needed >= result_size - 1)
+        {
+            break;
+        }
+        // Append the filename and a newline
+        strcat(result, filenames[i]);
+        strcat(result, "\n");
+
+        current_size += needed;
+    }
+    return result;
+}
+
 void sanitize_path(char *resolved_path, const char *raw_path, const char *base_dir)
 {
     if (strncmp(raw_path, "~S1/", 4) == 0)
@@ -112,7 +230,7 @@ void file_forwader(int sock, char command[], int filesize, int client_socket, ch
         if (sent < bytes_received)
         {
             printf("Error forwarding data to %s\n", server_name);
-            close(sock);
+            // close(sock);
             return;
         }
 
@@ -388,7 +506,7 @@ void downltar_handler(int client_socket, char *buffer)
     // buffer is the full command, e.g., "downltar .c"
     char command[20], filetype[16];
     sscanf(buffer, "%s %s", command, filetype);
-    if(strcmp(filetype, ".c") == 0)
+    if (strcmp(filetype, ".c") == 0)
     {
         // Create tar file of all .c files in S1_folder
         char s1folder[512];
@@ -399,7 +517,7 @@ void downltar_handler(int client_socket, char *buffer)
         system(tarCommand);
         // Open and send cfiles.tar to client
         FILE *fp = fopen("cfiles.tar", "rb");
-        if(fp == NULL)
+        if (fp == NULL)
         {
             perror("Failed to open tar file");
             send(client_socket, "Error creating tar file", 25, 0);
@@ -411,7 +529,7 @@ void downltar_handler(int client_socket, char *buffer)
         send(client_socket, &filesize, sizeof(int), 0);
         char filebuffer[BUFFER_SIZE];
         int bytes;
-        while((bytes = fread(filebuffer, 1, BUFFER_SIZE, fp)) > 0)
+        while ((bytes = fread(filebuffer, 1, BUFFER_SIZE, fp)) > 0)
         {
             send(client_socket, filebuffer, bytes, 0);
         }
@@ -419,7 +537,7 @@ void downltar_handler(int client_socket, char *buffer)
         remove("cfiles.tar");
         printf("Tar file cfiles.tar sent successfully.\n");
     }
-    else if(strcmp(filetype, ".pdf") == 0)
+    else if (strcmp(filetype, ".pdf") == 0)
     {
         // Forward downltar command to S2
         int sock = connect_to_server(SERVER_PORT_2);
@@ -429,17 +547,18 @@ void downltar_handler(int client_socket, char *buffer)
         send(client_socket, &filesize, sizeof(int), 0);
         char filebuffer[BUFFER_SIZE];
         int bytes, totalReceived = 0;
-        while(totalReceived < filesize)
+        while (totalReceived < filesize)
         {
             bytes = recv(sock, filebuffer, BUFFER_SIZE, 0);
-            if(bytes <= 0) break;
+            if (bytes <= 0)
+                break;
             send(client_socket, filebuffer, bytes, 0);
             totalReceived += bytes;
         }
         close(sock);
         printf("Tar file (pdf.tar) received from S2 and forwarded to client.\n");
     }
-    else if(strcmp(filetype, ".txt") == 0)
+    else if (strcmp(filetype, ".txt") == 0)
     {
         // Forward downltar command to S3
         int sock = connect_to_server(SERVER_PORT_3);
@@ -449,10 +568,11 @@ void downltar_handler(int client_socket, char *buffer)
         send(client_socket, &filesize, sizeof(int), 0);
         char filebuffer[BUFFER_SIZE];
         int bytes, totalReceived = 0;
-        while(totalReceived < filesize)
+        while (totalReceived < filesize)
         {
             bytes = recv(sock, filebuffer, BUFFER_SIZE, 0);
-            if(bytes <= 0) break;
+            if (bytes <= 0)
+                break;
             send(client_socket, filebuffer, bytes, 0);
             totalReceived += bytes;
         }
@@ -463,6 +583,99 @@ void downltar_handler(int client_socket, char *buffer)
     {
         send(client_socket, "Unsupported file type for downltar", 35, 0);
     }
+}
+void get_fnames_from_other_servers(char *all_file_name, size_t buffer_size, char buffer[], int socket)
+{
+    int sock = connect_to_server(socket);
+    if (sock < 0)
+    {
+        printf("Failed to connect to server on port %d\n", socket);
+        return;
+    }
+    send(sock, buffer, strlen(buffer), 0);
+    // char file_list[4096] = {0};
+
+    recv(sock, all_file_name, buffer_size - 1, 0);
+    printf("Server response: %s\n\n", all_file_name);
+
+    close(sock);
+}
+
+void diplay_filename_handler(int client_socket, char buffer[])
+{
+
+    char pdf_files[BUFFER_SIZE * 5] = {0};
+    char txt_files[BUFFER_SIZE * 5] = {0};
+    char zip_files[BUFFER_SIZE * 5] = {0};
+    // void get_fnames_from_other_servers(char *file_name, char buffer[], int socket, char *all_files);
+    get_fnames_from_other_servers(pdf_files, sizeof(pdf_files), buffer, SERVER_PORT_2);
+    get_fnames_from_other_servers(txt_files, sizeof(txt_files), buffer, SERVER_PORT_3);
+    get_fnames_from_other_servers(zip_files, sizeof(zip_files), buffer, SERVER_PORT_4);
+
+    char command[20], filename[256], file_path[512];
+
+    char *token = strtok(buffer, " ");
+    char *path_arg = strtok(NULL, "\n");
+
+    strcpy(command, token);
+    strcpy(file_path, path_arg);
+
+    char base_path[512];
+    get_s1_folder_path(base_path);
+    char resolved_path[512];
+    sanitize_path(resolved_path, file_path, base_path);
+
+    // printf("Removed file %s\n", resolved_path);
+    char file_list[BUFFER_SIZE * 5] = {0};
+    if (check_path_exists(resolved_path) == 2)
+    {
+
+        // printf("the path is valid and so inside the conditions\n\n");
+        if (list_all_files(resolved_path, NULL, file_list, sizeof(file_list)) != NULL)
+        {
+            printf("All files:\n%s\n", file_list);
+        }
+        else
+        {
+            printf("Error listing files in %s\n", resolved_path);
+        }
+    }
+
+    char result[BUFFER_SIZE * 20] = "Files:\n";
+
+    // Add C files if any
+    if (strlen(file_list) > 0)
+    {
+        strcat(result, file_list);
+    }
+
+    // Add PDF files if any
+    if (strlen(pdf_files) > 0 && pdf_files[0] != '\0' &&
+        strcmp(pdf_files, "path does not exist") != 0 &&
+        strcmp(pdf_files, "Error listing files in the specified directory.") != 0)
+    {
+        strcat(result, pdf_files);
+    }
+
+    // Add TXT files if any
+    if (strlen(txt_files) > 0 && txt_files[0] != '\0' &&
+        strcmp(txt_files, "path does not exist") != 0 &&
+        strcmp(txt_files, "Error listing files in the specified directory.") != 0)
+    {
+        strcat(result, txt_files);
+    }
+
+    // Add ZIP files if any
+    if (strlen(zip_files) > 0 && zip_files[0] != '\0' &&
+        strcmp(zip_files, "path does not exist") != 0 &&
+        strcmp(zip_files, "Error listing files in the specified directory.") != 0)
+    {
+        strcat(result, zip_files);
+    }
+    result[BUFFER_SIZE * 20 - 1] = '\0';
+
+    // Send the combined result to the client
+    send(client_socket, result, strlen(result), 0);
 }
 
 void prcclient(int client_socket)
@@ -508,6 +721,11 @@ void prcclient(int client_socket)
         else if (strcmp(command, "downltar") == 0)
         {
             downltar_handler(client_socket, buffer);
+        }
+        else if (strcmp(command, "dispfnames") == 0)
+        {
+            // printf("inside the display\n");
+            diplay_filename_handler(client_socket, buffer);
         }
         else
         {
