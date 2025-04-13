@@ -11,7 +11,7 @@
 #include <errno.h>
 #include <time.h>
 
-#define SERVER_PORT 7777
+#define SERVER_PORT 8001
 #define BUFFER_SIZE 1024
 #define MAX_ARGS 5
 #define MAX_COMMAND_LENGTH 256
@@ -95,15 +95,17 @@ void generate_unique_filename(const char *base_name, char *unique_name, size_t s
 
 void download_tar(int sock, char *file_type)
 {
-    if (file_type == NULL) {
+    if (file_type == NULL)
+    {
         printf("Error: Missing file type. Usage: downltar [.c|.pdf|.txt]\n");
         return;
     }
 
     // Validate file type
-    if (strcmp(file_type, ".c") != 0 && 
-        strcmp(file_type, ".pdf") != 0 && 
-        strcmp(file_type, ".txt") != 0) {
+    if (strcmp(file_type, ".c") != 0 &&
+        strcmp(file_type, ".pdf") != 0 &&
+        strcmp(file_type, ".txt") != 0)
+    {
         printf("Error: Unsupported file type '%s'. Supported types are: .c, .pdf, .txt\n", file_type);
         return;
     }
@@ -116,11 +118,12 @@ void download_tar(int sock, char *file_type)
 
     // Receive file size
     int filesize;
-    if (recv(sock, &filesize, sizeof(int), 0) <= 0) {
+    if (recv(sock, &filesize, sizeof(int), 0) <= 0)
+    {
         printf("Error: Failed to receive response from server\n");
         return;
     }
-    
+
     if (filesize <= 0)
     {
         printf("Error: No tar file or error creating tar archive\n");
@@ -132,7 +135,7 @@ void download_tar(int sock, char *file_type)
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
     strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm);
-    
+
     char tar_filename[128];
     if (strcmp(file_type, ".c") == 0)
         snprintf(tar_filename, sizeof(tar_filename), "cfiles_%s.tar", timestamp);
@@ -151,52 +154,61 @@ void download_tar(int sock, char *file_type)
         perror("Error: File creation failed");
         return;
     }
-    
+
     // Receive file data in chunks
     char bufferTar[BUFFER_SIZE];
     int bytes_received, total_received = 0;
-    
+
     while (total_received < filesize)
     {
         bytes_received = recv(sock, bufferTar, BUFFER_SIZE, 0);
-        if (bytes_received <= 0) {
+        if (bytes_received <= 0)
+        {
             printf("Warning: Connection closed before receiving complete file\n");
             break;
         }
-        
+
         size_t written = fwrite(bufferTar, 1, bytes_received, fp);
-        if (written < bytes_received) {
+        if (written < bytes_received)
+        {
             printf("Error: Failed to write all received data to file\n");
             break;
         }
-        
+
         total_received += bytes_received;
-        
+
         // Show progress for large files
-        if (filesize > BUFFER_SIZE * 10 && total_received % (BUFFER_SIZE * 5) == 0) {
-            printf("Download progress: %d/%d bytes (%.1f%%)\n", 
-                   total_received, filesize, 
+        if (filesize > BUFFER_SIZE * 10 && total_received % (BUFFER_SIZE * 5) == 0)
+        {
+            printf("Download progress: %d/%d bytes (%.1f%%)\n",
+                   total_received, filesize,
                    ((float)total_received / filesize) * 100);
         }
     }
-    
+
     fclose(fp);
-    
+
     // Verify the downloaded file
     struct stat st;
-    if (stat(tar_filename, &st) == 0 && st.st_size > 0) {
+    if (stat(tar_filename, &st) == 0 && st.st_size > 0)
+    {
         // Check if it's a valid tar file
         char check_cmd[512];
         snprintf(check_cmd, sizeof(check_cmd), "tar -tf %s >/dev/null 2>&1", tar_filename);
-        
-        if (system(check_cmd) == 0) {
-            printf("Tar file downloaded successfully as: %s (%ld bytes)\n", 
+
+        if (system(check_cmd) == 0)
+        {
+            printf("Tar file downloaded successfully as: %s (%ld bytes)\n",
                    tar_filename, (long)st.st_size);
             printf("You can extract it with: tar -xf %s\n", tar_filename);
-        } else {
+        }
+        else
+        {
             printf("Warning: The downloaded file does not appear to be a valid tar archive\n");
         }
-    } else {
+    }
+    else
+    {
         printf("Error: Downloaded file verification failed\n");
     }
 }
@@ -350,12 +362,32 @@ int main()
             send(sock, command, strlen(command), 0);
             memset(command, 0, sizeof(command));
             char answer[2343];
-            recv(sock, answer, sizeof(answer), 0);
-            if (strlen(answer) == 0)
+            memset(answer, 0, sizeof(answer));
+            ssize_t bytes_received = recv(sock, answer, sizeof(answer) - 1, 0); // Leave space for null term
+
+            if (bytes_received >= 0)
             {
-                printf("Path does not exists!! Or may be there is no file in that");
+                answer[bytes_received] = '\0';
             }
-            printf("%s\n", answer);
+            else
+            {
+                perror("recv failed");
+                answer[0] = '\0';
+            }
+            // Check if server sent empty response
+            if (strlen(answer) == 0 && bytes_received >= 0)
+            {
+                printf("Path does not exist or contains no files.\n");
+            }
+            else if (bytes_received > 0)
+            {
+                printf("%s\n", answer);
+            }
+        }
+        else if (strcmp(command, "exit") == 0)
+        {
+            printf("Exiting w25clients. Goodbye!\n");
+            break;
         }
         else
         {

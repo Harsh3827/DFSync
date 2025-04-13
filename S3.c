@@ -11,7 +11,7 @@
 #include <errno.h>
 #include <time.h>
 
-#define SERVER_PORT 8017 // S3 listens on port 8003
+#define SERVER_PORT 8003 // S3 listens on port 8003
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 
@@ -33,11 +33,12 @@ void create_path_if_not_exist(const char *path)
 
 void get_s3_folder_path(char *base_path)
 {
+    const char *home_dir = getenv("HOME");
     char cwd[512];
-    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    if (home_dir != NULL)
     {
-        snprintf(base_path, 512, "%s/S3_folder", cwd);
-        mkdir(base_path, 0777);
+        snprintf(base_path, 512, "%s/S3", home_dir);
+        mkdir(base_path, 0777); // ensure S1_folder exists
     }
     else
     {

@@ -32,11 +32,12 @@ void create_path_if_not_exist(const char *path)
 
 void get_s4_folder_path(char *base_path)
 {
+    const char *home_dir = getenv("HOME");
     char cwd[512];
-    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    if (home_dir != NULL)
     {
-        snprintf(base_path, 512, "%s/S4_folder", cwd);
-        mkdir(base_path, 0777);
+        snprintf(base_path, 512, "%s/S4", home_dir);
+        mkdir(base_path, 0777); // ensure S1_folder exists
     }
     else
     {

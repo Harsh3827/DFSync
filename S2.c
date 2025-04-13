@@ -14,7 +14,7 @@
 // #define PORT 8001
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
-#define SERVER_PORT_2 7778
+#define SERVER_PORT_2 8002
 
 void create_path_if_not_exist(const char *path)
 {
@@ -32,10 +32,11 @@ void create_path_if_not_exist(const char *path)
 }
 void get_s2_folder_path(char *base_path)
 {
+    const char *home_dir = getenv("HOME");
     char cwd[512];
-    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    if (home_dir != NULL)
     {
-        snprintf(base_path, 512, "%s/S2_folder", cwd);
+        snprintf(base_path, 512, "%s/S2", home_dir);
         mkdir(base_path, 0777); // ensure S1_folder exists
     }
     else
@@ -353,7 +354,8 @@ void diplay_filename_handler(int client_socket, char buffer[])
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
-    char command[20], filename[256], path[512],filetype[16];;
+    char command[20], filename[256], path[512];
+    ;
 
     while (1)
     {
@@ -390,6 +392,9 @@ void prcclient(int client_socket)
         // Inside S2.c prcclient(), after processing "uploadf" and "removef":
         else if (strcmp(command, "downltar") == 0)
         {
+            char filetype[16];
+            sscanf(buffer, "%s %s", command, filetype);
+
             if (strcmp(filetype, ".pdf") == 0)
             {
                 char s2folder[512];
@@ -445,7 +450,7 @@ int main()
     int server_socket, client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_size;
-    char filetype[10];  // Added filetype variable declaration
+    char filetype[10]; // Added filetype variable declaration
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
 

@@ -11,11 +11,11 @@
 #include <errno.h>
 #include <time.h>
 
-#define PORT 7777
+#define PORT 8001
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
-#define SERVER_PORT_2 7778
-#define SERVER_PORT_3 8017
+#define SERVER_PORT_2 8002
+#define SERVER_PORT_3 8003
 #define SERVER_PORT_4 8004
 
 int connect_to_server(int SERVER_PORT)
@@ -57,10 +57,11 @@ void create_path_if_not_exist(const char *path)
 }
 void get_s1_folder_path(char *base_path)
 {
+    const char *home_dir = getenv("HOME");
     char cwd[512];
-    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    if (home_dir != NULL)
     {
-        snprintf(base_path, 512, "%s/S1_folder", cwd);
+        snprintf(base_path, 512, "%s/S1", home_dir);
         mkdir(base_path, 0777); // ensure S1_folder exists
     }
     else
@@ -591,27 +592,45 @@ void get_fnames_from_other_servers(char *all_file_name, size_t buffer_size, char
     if (sock < 0)
     {
         printf("Failed to connect to server on port %d\n", socket);
+        if (buffer_size > 0)
+        {
+            all_file_name[0] = '\0';
+        }
         return;
     }
     send(sock, buffer, strlen(buffer), 0);
-    // char file_list[4096] = {0};
-
-    recv(sock, all_file_name, buffer_size - 1, 0);
-    printf("Server response: %s\n\n", all_file_name);
-
+    ssize_t bytes_received = recv(sock, all_file_name, buffer_size - 1, 0);
+    if (bytes_received >= 0)
+    {
+        all_file_name[bytes_received] = '\0';
+        printf("Server %d response: %s\n\n", socket, all_file_name);
+    }
+    else
+    {
+        perror("recv failed");
+        if (buffer_size > 0)
+        {
+            all_file_name[0] = '\0'; // Make it an empty string on error
+        }
+        printf("Failed to receive data from server %d\n", socket);
+    }
     close(sock);
 }
 
 void diplay_filename_handler(int client_socket, char buffer[])
 {
 
+    char original_buffer_copy[BUFFER_SIZE];
+    strncpy(original_buffer_copy, buffer, BUFFER_SIZE - 1);
+    original_buffer_copy[BUFFER_SIZE - 1] = '\0';
+
     char pdf_files[BUFFER_SIZE * 5] = {0};
     char txt_files[BUFFER_SIZE * 5] = {0};
     char zip_files[BUFFER_SIZE * 5] = {0};
     // void get_fnames_from_other_servers(char *file_name, char buffer[], int socket, char *all_files);
-    get_fnames_from_other_servers(pdf_files, sizeof(pdf_files), buffer, SERVER_PORT_2);
-    get_fnames_from_other_servers(txt_files, sizeof(txt_files), buffer, SERVER_PORT_3);
-    get_fnames_from_other_servers(zip_files, sizeof(zip_files), buffer, SERVER_PORT_4);
+    get_fnames_from_other_servers(pdf_files, sizeof(pdf_files), original_buffer_copy, SERVER_PORT_2);
+    get_fnames_from_other_servers(txt_files, sizeof(txt_files), original_buffer_copy, SERVER_PORT_3);
+    get_fnames_from_other_servers(zip_files, sizeof(zip_files), original_buffer_copy, SERVER_PORT_4);
 
     char command[20], filename[256], file_path[512];
 
@@ -643,6 +662,7 @@ void diplay_filename_handler(int client_socket, char buffer[])
     }
 
     char result[BUFFER_SIZE * 20] = "Files:\n";
+    memset(result + strlen(result), 0, sizeof(result) - strlen(result));
 
     // Add C files if any
     if (strlen(file_list) > 0)
@@ -677,6 +697,8 @@ void diplay_filename_handler(int client_socket, char buffer[])
 
     // Send the combined result to the client
     send(client_socket, result, strlen(result), 0);
+
+    memset(buffer, 0, strlen(buffer));
 }
 
 void prcclient(int client_socket)
