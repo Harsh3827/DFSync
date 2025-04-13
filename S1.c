@@ -14,7 +14,7 @@
 #define PORT 7777
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
-#define SERVER_PORT_2 8002
+#define SERVER_PORT_2 7778
 #define SERVER_PORT_3 8017
 #define SERVER_PORT_4 8004
 

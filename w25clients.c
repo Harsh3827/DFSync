@@ -95,51 +95,110 @@ void generate_unique_filename(const char *base_name, char *unique_name, size_t s
 
 void download_tar(int sock, char *file_type)
 {
+    if (file_type == NULL) {
+        printf("Error: Missing file type. Usage: downltar [.c|.pdf|.txt]\n");
+        return;
+    }
+
+    // Validate file type
+    if (strcmp(file_type, ".c") != 0 && 
+        strcmp(file_type, ".pdf") != 0 && 
+        strcmp(file_type, ".txt") != 0) {
+        printf("Error: Unsupported file type '%s'. Supported types are: .c, .pdf, .txt\n", file_type);
+        return;
+    }
+
+    printf("Requesting tar archive of %s files...\n", file_type + 1); // Skip the dot in file_type
+
     char command[BUFFER_SIZE];
     snprintf(command, sizeof(command), "downltar %s", file_type);
     send(sock, command, strlen(command), 0);
 
+    // Receive file size
     int filesize;
-    recv(sock, &filesize, sizeof(int), 0);
+    if (recv(sock, &filesize, sizeof(int), 0) <= 0) {
+        printf("Error: Failed to receive response from server\n");
+        return;
+    }
+    
     if (filesize <= 0)
     {
         printf("Error: No tar file or error creating tar archive\n");
         return;
     }
 
+    // Generate appropriate filename with timestamp
+    char timestamp[32];
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm);
+    
     char tar_filename[128];
     if (strcmp(file_type, ".c") == 0)
-        strcpy(tar_filename, "cfiles.tar");
+        snprintf(tar_filename, sizeof(tar_filename), "cfiles_%s.tar", timestamp);
     else if (strcmp(file_type, ".pdf") == 0)
-        strcpy(tar_filename, "pdf.tar");
+        snprintf(tar_filename, sizeof(tar_filename), "pdf_%s.tar", timestamp);
     else if (strcmp(file_type, ".txt") == 0)
-        strcpy(tar_filename, "text.tar");
+        snprintf(tar_filename, sizeof(tar_filename), "text_%s.tar", timestamp);
     else
-        strcpy(tar_filename, "downloaded_tar.tar");
+        snprintf(tar_filename, sizeof(tar_filename), "downloaded_%s.tar", timestamp);
 
-    char unique_filename[128];
-    generate_unique_filename(tar_filename, unique_filename, sizeof(unique_filename));
+    printf("Receiving tar file as: %s (%d bytes)\n", tar_filename, filesize);
 
-    printf("Receiving tar file as: %s (%d bytes)\n", unique_filename, filesize);
-
-    FILE *fp = fopen(unique_filename, "wb");
+    FILE *fp = fopen(tar_filename, "wb");
     if (fp == NULL)
     {
-        perror("File open failed");
+        perror("Error: File creation failed");
         return;
     }
+    
+    // Receive file data in chunks
     char bufferTar[BUFFER_SIZE];
     int bytes_received, total_received = 0;
+    
     while (total_received < filesize)
     {
         bytes_received = recv(sock, bufferTar, BUFFER_SIZE, 0);
-        if (bytes_received <= 0)
+        if (bytes_received <= 0) {
+            printf("Warning: Connection closed before receiving complete file\n");
             break;
-        fwrite(bufferTar, 1, bytes_received, fp);
+        }
+        
+        size_t written = fwrite(bufferTar, 1, bytes_received, fp);
+        if (written < bytes_received) {
+            printf("Error: Failed to write all received data to file\n");
+            break;
+        }
+        
         total_received += bytes_received;
+        
+        // Show progress for large files
+        if (filesize > BUFFER_SIZE * 10 && total_received % (BUFFER_SIZE * 5) == 0) {
+            printf("Download progress: %d/%d bytes (%.1f%%)\n", 
+                   total_received, filesize, 
+                   ((float)total_received / filesize) * 100);
+        }
     }
+    
     fclose(fp);
-    printf("Tar file downloaded successfully as: %s\n", unique_filename);
+    
+    // Verify the downloaded file
+    struct stat st;
+    if (stat(tar_filename, &st) == 0 && st.st_size > 0) {
+        // Check if it's a valid tar file
+        char check_cmd[512];
+        snprintf(check_cmd, sizeof(check_cmd), "tar -tf %s >/dev/null 2>&1", tar_filename);
+        
+        if (system(check_cmd) == 0) {
+            printf("Tar file downloaded successfully as: %s (%ld bytes)\n", 
+                   tar_filename, (long)st.st_size);
+            printf("You can extract it with: tar -xf %s\n", tar_filename);
+        } else {
+            printf("Warning: The downloaded file does not appear to be a valid tar archive\n");
+        }
+    } else {
+        printf("Error: Downloaded file verification failed\n");
+    }
 }
 
 void upload_file(int sock, const char *file_name, const char *destination_path)

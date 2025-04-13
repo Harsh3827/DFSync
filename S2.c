@@ -14,7 +14,7 @@
 // #define PORT 8001
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
-#define SERVER_PORT_2 8002
+#define SERVER_PORT_2 7778
 
 void create_path_if_not_exist(const char *path)
 {
