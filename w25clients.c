@@ -79,39 +79,158 @@ void get_actual_filename(const char *file_path, char *basename_buffer, size_t bu
     strncpy(basename_buffer, basename, buffer_size);
     basename_buffer[buffer_size - 1] = '\0'; // Ensure null termination
 }
-
-// This function checks if a file exists and, if so, appends a timestamp to generate a unique filename.
-void generate_unique_filename(const char *base_name, char *unique_name, size_t size)
+void display_extension_error(const char *command_str)
 {
-    strncpy(unique_name, base_name, size);
-    unique_name[size - 1] = '\0';
-    if (access(unique_name, F_OK) == 0)
+    char command[20] = {0};
+    sscanf(command_str, "%s", command);
+
+    if (strcmp(command, "uploadf") == 0)
     {
-        char temp[64];
-        snprintf(temp, sizeof(temp), "_%ld", time(NULL));
-        strncat(unique_name, temp, size - strlen(unique_name) - 1);
+        printf("Error: File must have a valid extension (.c, .pdf, .txt, .zip)\n");
+        printf("Usage: uploadf <filename> <destination_path>\n");
     }
+    else if (strcmp(command, "downlf") == 0)
+    {
+        printf("Error: File must have a valid extension (.c, .pdf, .txt, .zip)\n");
+        printf("Usage: downlf <filename>\n");
+    }
+    else if (strcmp(command, "removef") == 0)
+    {
+        printf("Error: File must have a valid extension (.c, .pdf, .txt)\n");
+        printf("Usage: removef <filename>\n");
+    }
+    else if (strcmp(command, "downltar") == 0)
+    {
+        printf("Error: Invalid file type. Supported types are: .c, .pdf, .txt\n");
+        printf("Usage: downltar <filetype>\n");
+    }
+    else
+    {
+        printf("Error: Invalid command or file extension\n");
+    }
+}
+int validate_extension(const char *command_str)
+{
+    char command[20] = {0};
+    char arg1[512] = {0};
+    char arg2[512] = {0};
+
+    // Make a copy of the command string since strtok modifies the string
+    char command_copy[BUFFER_SIZE];
+    strncpy(command_copy, command_str, BUFFER_SIZE - 1);
+    command_copy[BUFFER_SIZE - 1] = '\0';
+
+    // Parse the command and its arguments
+    char *token = strtok(command_copy, " ");
+    if (token != NULL)
+    {
+        strncpy(command, token, sizeof(command) - 1);
+        token = strtok(NULL, " ");
+        if (token != NULL)
+        {
+            strncpy(arg1, token, sizeof(arg1) - 1);
+            token = strtok(NULL, " ");
+            if (token != NULL)
+            {
+                strncpy(arg2, token, sizeof(arg2) - 1);
+            }
+        }
+    }
+
+    // Valid extensions
+    const char *valid_extensions[] = {".c", ".pdf", ".txt", ".zip"};
+    int num_valid_extensions = 4;
+
+    // For downltar, we don't allow .zip files
+    const char *downltar_valid_extensions[] = {".c", ".pdf", ".txt"};
+    int num_downltar_valid_extensions = 3;
+
+    // Check for valid paths that start with ~S1/
+    if (strcmp(command, "uploadf") == 0)
+    {
+        // For uploadf, the path is the second argument (arg2)
+        if (arg2[0] == '\0' || strncmp(arg2, "~S1/", 4) != 0)
+        {
+            printf("Error: Destination path must start with '~S1/'\n");
+            return 0;
+        }
+
+        // Also check the file extension in the first argument
+        const char *extension = strrchr(arg1, '.');
+        if (!extension)
+        {
+            return 0; // No extension found
+        }
+
+        // Validate against our list of extensions
+        for (int i = 0; i < num_valid_extensions; i++)
+        {
+            if (strcmp(extension, valid_extensions[i]) == 0)
+            {
+                return 1; // Valid extension and path
+            }
+        }
+        return 0; // Invalid extension
+    }
+    else if (strcmp(command, "downlf") == 0 || strcmp(command, "removef") == 0)
+    {
+        // For downlf and removef, check that the path starts with ~S1/
+        if (strncmp(arg1, "~S1/", 4) != 0)
+        {
+            printf("Error: File path must start with '~S1/'\n");
+            return 0;
+        }
+        // Extract the filename from the path
+        const char *filename = strrchr(arg1, '/');
+        if (filename)
+        {
+            // Skip the slash
+            filename++;
+            const char *extension = strrchr(filename, '.');
+            if (!extension)
+            {
+                return 0; // No extension found
+            }
+
+            // For these commands, all extensions are valid
+            for (int i = 0; i < num_valid_extensions; i++)
+            {
+                if (strcmp(extension, valid_extensions[i]) == 0)
+                {
+                    return 1; // Valid extension and path
+                }
+            }
+        }
+        return 0; // Invalid filename or extension
+    }
+    else if (strcmp(command, "downltar") == 0)
+    {
+        for (int i = 0; i < num_downltar_valid_extensions; i++)
+        {
+            if (strcmp(arg1, downltar_valid_extensions[i]) == 0)
+            {
+                return 1; // Valid extension for downltar
+            }
+        }
+        return 0; // Invalid extension for downltar
+    }
+    else if (strcmp(command, "dispfnames") == 0)
+    {
+        // For dispfnames, check that the path starts with ~S1/
+        if (strncmp(arg1, "~S1/", 4) != 0)
+        {
+            printf("Error: Directory path must start with '~S1/'\n");
+            return 0;
+        }
+        return 1;
+    }
+
+    return 0; // Unknown command or invalid input
 }
 
 void download_tar(int sock, char *file_type)
 {
-    if (file_type == NULL)
-    {
-        printf("Error: Missing file type. Usage: downltar [.c|.pdf|.txt]\n");
-        return;
-    }
-
-    // Validate file type
-    if (strcmp(file_type, ".c") != 0 &&
-        strcmp(file_type, ".pdf") != 0 &&
-        strcmp(file_type, ".txt") != 0)
-    {
-        printf("Error: Unsupported file type '%s'. Supported types are: .c, .pdf, .txt\n", file_type);
-        return;
-    }
-
     printf("Requesting tar archive of %s files...\n", file_type + 1); // Skip the dot in file_type
-
     char command[BUFFER_SIZE];
     snprintf(command, sizeof(command), "downltar %s", file_type);
     send(sock, command, strlen(command), 0);
@@ -123,7 +242,6 @@ void download_tar(int sock, char *file_type)
         printf("Error: Failed to receive response from server\n");
         return;
     }
-
     if (filesize <= 0)
     {
         printf("Error: No tar file or error creating tar archive\n");
@@ -317,7 +435,11 @@ int main()
             printf("Exiting w25clients. Goodbye!\n");
             break;
         }
-
+        if (!validate_extension(command))
+        {
+            display_extension_error(command);
+            continue;
+        }
         char *command_array[MAX_ARGS];
         char temp_command[MAX_COMMAND_LENGTH];
         strcpy(temp_command, command);
