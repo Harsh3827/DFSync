@@ -9,12 +9,13 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 
-#define PORT 8001
+#define PORT 7777
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 #define SERVER_PORT_2 8002
-#define SERVER_PORT_3 8003
+#define SERVER_PORT_3 8017
 #define SERVER_PORT_4 8004
 
 int connect_to_server(int SERVER_PORT)
@@ -503,20 +504,22 @@ void remove_handler(int client_socket, char buffer[])
 
 void downltar_handler(int client_socket, char *buffer)
 {
-    // buffer is the full command, e.g., "downltar .c"
+    // buffer is of the form "downltar <filetype>"
     char command[20], filetype[16];
     sscanf(buffer, "%s %s", command, filetype);
     if (strcmp(filetype, ".c") == 0)
     {
-        // Create tar file of all .c files in S1_folder
         char s1folder[512];
         get_s1_folder_path(s1folder);
+        // Generate a unique tar filename by appending the current timestamp.
+        char tarFilename[128];
+        snprintf(tarFilename, sizeof(tarFilename), "cfiles_%ld.tar", time(NULL));
         char tarCommand[1024];
         snprintf(tarCommand, sizeof(tarCommand),
-                 "find %s -type f -name '*.c' | tar -cf cfiles.tar -T -", s1folder);
+                 "find \"%s\" -type f -name '*.c' | tar -cf %s -T -", s1folder, tarFilename);
         system(tarCommand);
-        // Open and send cfiles.tar to client
-        FILE *fp = fopen("cfiles.tar", "rb");
+        // Open and send the tar file to the client.
+        FILE *fp = fopen(tarFilename, "rb");
         if (fp == NULL)
         {
             perror("Failed to open tar file");
@@ -534,12 +537,11 @@ void downltar_handler(int client_socket, char *buffer)
             send(client_socket, filebuffer, bytes, 0);
         }
         fclose(fp);
-        remove("cfiles.tar");
-        printf("Tar file cfiles.tar sent successfully.\n");
+        remove(tarFilename);
+        printf("Tar file %s sent successfully.\n", tarFilename);
     }
     else if (strcmp(filetype, ".pdf") == 0)
     {
-        // Forward downltar command to S2
         int sock = connect_to_server(SERVER_PORT_2);
         send(sock, buffer, strlen(buffer), 0);
         int filesize;
@@ -560,7 +562,6 @@ void downltar_handler(int client_socket, char *buffer)
     }
     else if (strcmp(filetype, ".txt") == 0)
     {
-        // Forward downltar command to S3
         int sock = connect_to_server(SERVER_PORT_3);
         send(sock, buffer, strlen(buffer), 0);
         int filesize;

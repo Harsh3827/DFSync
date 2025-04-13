@@ -8,8 +8,10 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <time.h>
 
-#define SERVER_PORT 8003 // S3 listens on port 8003
+#define SERVER_PORT 8017 // S3 listens on port 8003
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 
@@ -249,7 +251,8 @@ void tar_handler(int client_socket, char *file_type)
     {
         char s3folder[512];
         get_s3_folder_path(s3folder);
-        char tar_filename[64] = "text.tar";
+        char tar_filename[128];
+        snprintf(tar_filename, sizeof(tar_filename), "text_%ld.tar", time(NULL));
         char tarCommand[1024];
         // Create a tar archive (text.tar) of all .txt files in S3_folder.
         snprintf(tarCommand, sizeof(tarCommand),

@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 
 // #define PORT 8001
 #define BUFFER_SIZE 1024
@@ -352,7 +353,7 @@ void diplay_filename_handler(int client_socket, char buffer[])
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
-    char command[20], filename[256], path[512];
+    char command[20], filename[256], path[512],filetype[16];;
 
     while (1)
     {
@@ -389,23 +390,20 @@ void prcclient(int client_socket)
         // Inside S2.c prcclient(), after processing "uploadf" and "removef":
         else if (strcmp(command, "downltar") == 0)
         {
-            // Expect command format: downltar .pdf
-            char filetype[16];
-            sscanf(buffer, "%s %s", command, filetype);
             if (strcmp(filetype, ".pdf") == 0)
             {
-                // Create tar archive for PDFs in S2_folder:
                 char s2folder[512];
                 get_s2_folder_path(s2folder);
+                char tarFilename[128];
+                snprintf(tarFilename, sizeof(tarFilename), "pdf_%ld.tar", time(NULL));
                 char tarCommand[1024];
                 snprintf(tarCommand, sizeof(tarCommand),
-                         "find %s -type f -name '*.pdf' | tar -cf pdf.tar -T -", s2folder);
+                         "find \"%s\" -type f -name '*.pdf' | tar -cf %s -T -", s2folder, tarFilename);
                 system(tarCommand);
-                // Now send pdf.tar to the client:
-                FILE *fp = fopen("pdf.tar", "rb");
+                FILE *fp = fopen(tarFilename, "rb");
                 if (fp == NULL)
                 {
-                    perror("Failed to open pdf.tar");
+                    perror("Failed to open tar file");
                     send(client_socket, "Error creating tar file", 25, 0);
                     continue;
                 }
@@ -420,8 +418,8 @@ void prcclient(int client_socket)
                     send(client_socket, bufferTar, bytes, 0);
                 }
                 fclose(fp);
-                remove("pdf.tar");
-                printf("Tar file pdf.tar sent successfully from S2.\n");
+                remove(tarFilename);
+                printf("Tar file %s sent successfully from S2.\n", tarFilename);
             }
             else
             {
@@ -447,6 +445,7 @@ int main()
     int server_socket, client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_size;
+    char filetype[10];  // Added filetype variable declaration
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
 

@@ -6,8 +6,12 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <time.h>
 
-#define SERVER_PORT 8001
+#define SERVER_PORT 7777
 #define BUFFER_SIZE 1024
 #define MAX_ARGS 5
 #define MAX_COMMAND_LENGTH 256
@@ -76,6 +80,19 @@ void get_actual_filename(const char *file_path, char *basename_buffer, size_t bu
     basename_buffer[buffer_size - 1] = '\0'; // Ensure null termination
 }
 
+// This function checks if a file exists and, if so, appends a timestamp to generate a unique filename.
+void generate_unique_filename(const char *base_name, char *unique_name, size_t size)
+{
+    strncpy(unique_name, base_name, size);
+    unique_name[size - 1] = '\0';
+    if (access(unique_name, F_OK) == 0)
+    {
+        char temp[64];
+        snprintf(temp, sizeof(temp), "_%ld", time(NULL));
+        strncat(unique_name, temp, size - strlen(unique_name) - 1);
+    }
+}
+
 void download_tar(int sock, char *file_type)
 {
     char command[BUFFER_SIZE];
@@ -90,7 +107,7 @@ void download_tar(int sock, char *file_type)
         return;
     }
 
-    char tar_filename[64];
+    char tar_filename[128];
     if (strcmp(file_type, ".c") == 0)
         strcpy(tar_filename, "cfiles.tar");
     else if (strcmp(file_type, ".pdf") == 0)
@@ -100,15 +117,17 @@ void download_tar(int sock, char *file_type)
     else
         strcpy(tar_filename, "downloaded_tar.tar");
 
-    printf("Receiving tar file: %s (%d bytes)\n", tar_filename, filesize);
+    char unique_filename[128];
+    generate_unique_filename(tar_filename, unique_filename, sizeof(unique_filename));
 
-    FILE *fp = fopen(tar_filename, "wb");
+    printf("Receiving tar file as: %s (%d bytes)\n", unique_filename, filesize);
+
+    FILE *fp = fopen(unique_filename, "wb");
     if (fp == NULL)
     {
         perror("File open failed");
         return;
     }
-
     char bufferTar[BUFFER_SIZE];
     int bytes_received, total_received = 0;
     while (total_received < filesize)
@@ -120,7 +139,7 @@ void download_tar(int sock, char *file_type)
         total_received += bytes_received;
     }
     fclose(fp);
-    printf("Tar file downloaded successfully as: %s\n", tar_filename);
+    printf("Tar file downloaded successfully as: %s\n", unique_filename);
 }
 
 void upload_file(int sock, const char *file_name, const char *destination_path)
