@@ -2,7 +2,6 @@
 
 DFSync (Distributed File Synchronization System) is a multi-server file management system that simulates a cloud-based distributed file system. Developed in C for Linux environments, DFSync allows users to upload, download, remove, and archive files using a single client interface. The system automatically routes files to appropriate back-end servers based on file type, while keeping the client experience centralized and simple.
 
-/* This project was built as part of the COMP-8567 Systems Programming course at the University of Windsor to demonstrate socket programming, inter-process communication, and concurrent server handling. */
 
 **Key Features**
 
