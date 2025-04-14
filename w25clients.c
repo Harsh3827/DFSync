@@ -17,8 +17,9 @@
 #define MAX_ARGS 5
 #define MAX_COMMAND_LENGTH 256
 
-
-
+//  Establishes a connection to the server
+//  Creates a new socket, configures it, and connects to the server
+//  return the socket file descriptor for communication with the server
 int connect_to_server()
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -110,13 +111,17 @@ void display_extension_error(const char *command_str)
         printf("Error: Invalid file type. Supported types are: .c, .pdf, .txt\n");
         printf("Usage: downltar <filetype>\n");
         printf("Example:  downltar .c\n");
-
     }
     else
     {
         printf("Error: Invalid command or file extension\n");
     }
 }
+
+// this function checks the command enterd by the user and check is it valid,
+//  the file which is upload or download is of valid extension and basically it checks the user
+// input and give error if it does not follow the requirement of the input
+
 int validate_extension(const char *command_str)
 {
     char command[20] = {0};
@@ -225,28 +230,29 @@ int validate_extension(const char *command_str)
     else if (strcmp(command, "dispfnames") == 0)
     {
         // For dispfnames, check that the path starts with ~S1/
-        if (strncmp(arg1, "~S1/", 4) != 0  || strlen(arg1) <= 4)
+        if (strncmp(arg1, "~S1/", 4) != 0 || strlen(arg1) <= 4)
         {
             printf("Error: Directory path must start with '~S1/ followed by a folder name\n");
             printf("Example: dispfnames ~S1/folder1\'\n");
             return 0;
         }
 
-        const char *foldername =  arg1 + 4;
+        // const char *foldername = arg1 + 4;
 
-        DIR *dir = opendir(foldername);
-        if (dir == NULL)
-        {
-            printf("Error: Folder '%s' does not exist.\n", foldername);
-            return 0;
-        }
-        closedir(dir);
+        // DIR *dir = opendir(foldername);
+        // if (dir == NULL)
+        // {
+        //     printf("Error: Folder '%s' does not exist.\n", foldername);
+        //     return 0;
+        // }
+        // closedir(dir);
         return 1;
     }
 
     return 0; // Unknown command or invalid input
 }
 
+// it takes the file extension and then make  tar file and that tar file is stored in client pwd...
 void download_tar(int sock, char *file_type)
 {
     if (file_type == NULL)
@@ -261,7 +267,7 @@ void download_tar(int sock, char *file_type)
     // Compose the downltar command and send it to the server.
     char command[BUFFER_SIZE];
     snprintf(command, sizeof(command), "downltar %s", file_type);
-    if(send(sock, command, strlen(command), 0) < 0)
+    if (send(sock, command, strlen(command), 0) < 0)
     {
         perror("Error sending downltar command");
         return;
@@ -281,32 +287,26 @@ void download_tar(int sock, char *file_type)
         printf("No files available for tar archive.\n");
         return;
     }
-    
-    // Generate an appropriate filename based on current timestamp.
-    char timestamp[32];
-    time_t t = time(NULL);
-    struct tm *tm = localtime(&t);
-    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm);
+
     char tar_filename[128];
     if (strcmp(file_type, ".c") == 0)
-        snprintf(tar_filename, sizeof(tar_filename), "cfiles_%s.tar", timestamp);
+        snprintf(tar_filename, sizeof(tar_filename), "cfiles.tar");
     else if (strcmp(file_type, ".pdf") == 0)
-        snprintf(tar_filename, sizeof(tar_filename), "pdf_%s.tar", timestamp);
+        snprintf(tar_filename, sizeof(tar_filename), "pdf.tar");
     else if (strcmp(file_type, ".txt") == 0)
-        snprintf(tar_filename, sizeof(tar_filename), "text_%s.tar", timestamp);
+        snprintf(tar_filename, sizeof(tar_filename), "text.tar");
     else
-        snprintf(tar_filename, sizeof(tar_filename), "downloaded_%s.tar", timestamp);
+        snprintf(tar_filename, sizeof(tar_filename), "downloaded.tar");
 
-    printf("Receiving tar file as: %s (%d bytes)...\n", tar_filename, filesize);
+    printf("Receiving tar file as: %s (%d bytes)\n", tar_filename, filesize);
 
-    // Open a file locally to save the tar archive.
     FILE *fp = fopen(tar_filename, "wb");
     if (fp == NULL)
     {
         perror("Error: File creation failed");
         return;
     }
-    
+
     // Receive the tar file data in chunks.
     char recv_buffer[BUFFER_SIZE];
     int bytes_received, total_received = 0;
@@ -327,14 +327,16 @@ void download_tar(int sock, char *file_type)
         total_received += bytes_received;
     }
     fclose(fp);
-    
+    memset(recv_buffer, 0, sizeof(recv_buffer));
+
     // Verify that the file was downloaded completely.
     if (total_received < filesize)
         printf("Download incomplete: Received %d out of %d bytes.\n", total_received, filesize);
     else
         printf("Tar file downloaded successfully as: %s\n", tar_filename);
 }
-
+// this function pass the user input i.e the file provided by the user , it read the file and pass the buffer to the server
+// in return server returns the message that the file is uploaded successfullly...
 void upload_file(int sock, const char *file_name, const char *destination_path)
 {
     FILE *fp = fopen(file_name, "rb");
@@ -365,9 +367,12 @@ void upload_file(int sock, const char *file_name, const char *destination_path)
     }
 
     fclose(fp);
+    memset(filebuffer, 0, sizeof(filebuffer));
     printf("File '%s' uploaded successfully.\n", file_name);
 }
 
+// this function send the file path of which it want to server and then server read that file and in return
+// it will send the file buffer and that will be read by client and client will create a file and the buffer content will be stored into that new file...
 void download_file(int sock, char buffer[])
 {
     send(sock, buffer, strlen(buffer), 0);
@@ -403,7 +408,7 @@ void download_file(int sock, char buffer[])
         return;
     }
 
-    char recv_buffer[BUFFER_SIZE];
+    char recv_buffer[BUFFER_SIZE * 30];
     int bytes_received, total_received = 0;
     while (total_received < filesize)
     {
@@ -415,9 +420,11 @@ void download_file(int sock, char buffer[])
     }
 
     fclose(fp);
+    memset(recv_buffer, 0, sizeof(recv_buffer));
     printf("File downloaded successfully to: %s\n", local_filepath);
 }
 
+// entry point of the client side code...
 int main()
 {
     int sock = connect_to_server();
