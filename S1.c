@@ -1,3 +1,6 @@
+// S1.c - Main server that routes client requests based on file extensions. Listens on port 7777.
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,13 +14,15 @@
 #include <errno.h>
 #include <time.h>
 
-#define PORT 8001
+#define PORT 7777
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
-#define SERVER_PORT_2 8002
-#define SERVER_PORT_3 8003
-#define SERVER_PORT_4 8004
+#define SERVER_PORT_2 7778
+#define SERVER_PORT_3 7779
+#define SERVER_PORT_4 7780
 
+
+// Establishes connection to another server (S2, S3, S4) based on provided port
 int connect_to_server(int SERVER_PORT)
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -41,6 +46,7 @@ int connect_to_server(int SERVER_PORT)
     return sock;
 }
 
+// // this sets the S1 folder path usually under the HOME directory eg. home/patel4xa/S1
 void create_path_if_not_exist(const char *path)
 {
     char temp[512];
@@ -55,6 +61,11 @@ void create_path_if_not_exist(const char *path)
     }
     mkdir(temp, 0777); // Create final directory
 }
+
+/**
+ * Get the path to S1 server's storage directory
+ * Creates the S1 directory in the user's home directory if it doesn't exist
+ */
 void get_s1_folder_path(char *base_path)
 {
     const char *home_dir = getenv("HOME");
@@ -71,6 +82,7 @@ void get_s1_folder_path(char *base_path)
     }
 }
 
+// check whether path exist return 2 for direcotory, return 1 for file, otherwise 0 
 int check_path_exists(const char *path)
 {
     struct stat path_stat;
@@ -87,6 +99,8 @@ int check_path_exists(const char *path)
     return 1;
 }
 
+
+// Lists all files from a given directory filtered by file extension, results sorted alphabetically
 char *list_all_files(const char *path, const char *extension, char *result, size_t result_size)
 {
     char command[1024];
@@ -110,16 +124,12 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     if (extension != NULL)
     {
         // Filter by extension
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f -name \"*%s\"",
-                 path, extension);
+        snprintf(command, sizeof(command),"find \"%s\" -type f -name \"*%s\"", path, extension);
     }
     else
     {
         // All files
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f",
-                 path);
+        snprintf(command, sizeof(command),"find \"%s\" -type f",path);
     }
     // Execute the command
     FILE *fp = popen(command, "r");
@@ -129,17 +139,15 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         return NULL;
     }
     // Store all filenames in an array for sorting
-    char filenames[1000][256]; // Support up to 1000 files
+    char filenames[1000][256];
     int file_count = 0;
     char line[1024];
-    // Read each line and extract the filename
+    // read each and extract names
     while (fgets(line, sizeof(line), fp) != NULL && file_count < 1000)
     {
-        // Remove newline character
         line[strcspn(line, "\n")] = 0;
-
-        // Extract just the filename (not the full path)
-        const char *filename = strrchr(line, '/');
+       
+        const char *filename = strrchr(line, '/');  // Extract just the filename (not the full path)
         if (filename)
         {
             filename++; // Skip the '/'
@@ -150,11 +158,11 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         }
         // Store the filename
         strncpy(filenames[file_count], filename, 255);
-        filenames[file_count][255] = '\0'; // Ensure null termination
+        filenames[file_count][255] = '\0';
         file_count++;
     }
     pclose(fp);
-    // Sort the filenames using a simple bubble sort
+    // Sort the filenames 
     for (int i = 0; i < file_count - 1; i++)
     {
         for (int j = 0; j < file_count - i - 1; j++)
@@ -174,8 +182,6 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     for (int i = 0; i < file_count; i++)
     {
         size_t needed = strlen(filenames[i]) + 1; // +1 for newline
-
-        // Check if we have enough space left in the buffer
         if (current_size + needed >= result_size - 1)
         {
             break;
@@ -189,6 +195,7 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     return result;
 }
 
+// Converts '~S1/' notation to actual directory path
 void sanitize_path(char *resolved_path, const char *raw_path, const char *base_dir)
 {
     if (strncmp(raw_path, "~S1/", 4) == 0)
@@ -252,6 +259,7 @@ void file_forwader(int sock, char command[], int filesize, int client_socket, ch
     send(client_socket, "File uploaded successfully", 26, 0);
 }
 
+/* OPTION 2 - Upload file feature ----------------------------------------------------------------*/
 void upload_handler(int client_socket, char *filename, char *dest_path, char command[])
 {
     char *ext = strrchr(filename, '.');
@@ -293,7 +301,7 @@ void upload_handler(int client_socket, char *filename, char *dest_path, char com
         fclose(fp);
         printf("File saved to %s\n", full_path);
     }
-    else if (strcmp(ext, ".pdf") == 0) // Note the "== 0" for equality
+    else if (strcmp(ext, ".pdf") == 0)
     {
 
         int sock = connect_to_server(SERVER_PORT_2);
@@ -332,6 +340,8 @@ void upload_handler(int client_socket, char *filename, char *dest_path, char com
         printf("Forwarding %s to appropriate server based on extension\n", filename);
     }
 }
+
+// Forwards file download requests to the appropriate server and sends file to client
 void download_request_forwader(int server_socket, char buffer[], int client_socket, char *servername)
 {
 
@@ -341,7 +351,7 @@ void download_request_forwader(int server_socket, char buffer[], int client_sock
 
     int filesize;
     recv(server_socket, &filesize, sizeof(int), 0);
-    printf("Receiving file: %s (%d bytes)\n", "prerakshah", filesize);
+    printf("Receiving file: %s (%d bytes)\n", " ", filesize);
     // Send file size
     send(client_socket, &filesize, sizeof(int), 0);
     usleep(100000);
@@ -375,6 +385,8 @@ void download_request_forwader(int server_socket, char buffer[], int client_sock
     close(server_socket);
     send(client_socket, response, strlen(response), 0);
 }
+
+/* OPTION 3 - Download file feature ----------------------------------------------------------------*/
 void download_handler(int client_socket, char buffer[])
 {
     char command[20], file_path[512];
@@ -446,6 +458,7 @@ void download_handler(int client_socket, char buffer[])
     }
 }
 
+// this fucntion forwards file removal requests to respective servers
 void remove_request_forwader(int sock, char buffer[], int client_socket, char *servername)
 {
 
@@ -457,7 +470,8 @@ void remove_request_forwader(int sock, char buffer[], int client_socket, char *s
     close(sock);
     send(client_socket, response, strlen(response), 0);
 }
-//---------- New Remove Functionality ----------
+
+/* OPTION 4 - Remove file feature ----------------------------------------------------------------*/
 void remove_handler(int client_socket, char buffer[])
 {
     char command[20], filename[256], file_path[512];
@@ -503,6 +517,7 @@ void remove_handler(int client_socket, char buffer[])
     }
 }
 
+/* OPTION 5 - download tar file feature ----------------------------------------------------------------*/
 void downltar_handler(int client_socket, char *buffer)
 {
     // buffer is of the form "downltar <filetype>"
@@ -586,6 +601,8 @@ void downltar_handler(int client_socket, char *buffer)
         send(client_socket, "Unsupported file type for downltar", 35, 0);
     }
 }
+
+// this fucntion get all the files names from servers
 void get_fnames_from_other_servers(char *all_file_name, size_t buffer_size, char buffer[], int socket)
 {
     int sock = connect_to_server(socket);
@@ -610,13 +627,15 @@ void get_fnames_from_other_servers(char *all_file_name, size_t buffer_size, char
         perror("recv failed");
         if (buffer_size > 0)
         {
-            all_file_name[0] = '\0'; // Make it an empty string on error
+            all_file_name[0] = '\0'; 
         }
         printf("Failed to receive data from server %d\n", socket);
     }
     close(sock);
 }
 
+
+//this will aggregates and sends all complete file listing from all servers
 void diplay_filename_handler(int client_socket, char buffer[])
 {
 
@@ -701,6 +720,7 @@ void diplay_filename_handler(int client_socket, char buffer[])
     memset(buffer, 0, strlen(buffer));
 }
 
+// Client request processing loop handling different commands
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];

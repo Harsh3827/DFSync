@@ -1,3 +1,5 @@
+// S3.c - Handles text file (.txt) operations on port 7779.
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,11 +13,11 @@
 #include <errno.h>
 #include <time.h>
 
-#define SERVER_PORT 8003 // S3 listens on port 8003
+#define SERVER_PORT 7779 // S3 listens on port 8003
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 
-// Create directories recursively if they do not exist.
+// this function creates a directory path recursively if not already present.
 void create_path_if_not_exist(const char *path)
 {
     char temp[512];
@@ -31,6 +33,7 @@ void create_path_if_not_exist(const char *path)
     mkdir(temp, 0777);
 }
 
+// this Sets the S3 folder path usually under the HOME directory eg. home/patel4xa/S3
 void get_s3_folder_path(char *base_path)
 {
     const char *home_dir = getenv("HOME");
@@ -47,6 +50,7 @@ void get_s3_folder_path(char *base_path)
     }
 }
 
+// Replace ~S1/ with the actual S3 base folder path.
 void sanitize_path(char *resolved_path, const char *raw_path, const char *base_dir)
 {
     // Strip "~S1/" from the beginning if present, so that "uploadf sample.txt ~S1/hatch"
@@ -60,10 +64,12 @@ void sanitize_path(char *resolved_path, const char *raw_path, const char *base_d
         snprintf(resolved_path, 512, "%s", raw_path);
     }
 }
+
+// check whether path exist return 2 for direcotory, return 1 for file, otherwise 0
 int check_path_exists(const char *path)
 {
     struct stat path_stat;
-    // Check if path exists using stat
+
     if (stat(path, &path_stat) != 0)
     {
         return 0;
@@ -99,16 +105,12 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     if (extension != NULL)
     {
         // Filter by extension
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f -name \"*%s\"",
-                 path, extension);
+        snprintf(command, sizeof(command),"find \"%s\" -type f -name \"*%s\"",path, extension);
     }
     else
     {
         // All files
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f",
-                 path);
+        snprintf(command, sizeof(command),"find \"%s\" -type f", path);
     }
     // Execute the command
     FILE *fp = popen(command, "r");
@@ -117,11 +119,10 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         perror("popen failed");
         return NULL;
     }
-    // Store all filenames in an array for sorting
-    char filenames[1000][256]; // Support up to 1000 files
+    // storing names in array for sorting
+    char filenames[1000][256];
     int file_count = 0;
     char line[1024];
-    // Read each line and extract the filename
     while (fgets(line, sizeof(line), fp) != NULL && file_count < 1000)
     {
         // Remove newline character
@@ -139,11 +140,10 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         }
         // Store the filename
         strncpy(filenames[file_count], filename, 255);
-        filenames[file_count][255] = '\0'; // Ensure null termination
+        filenames[file_count][255] = '\0'; 
         file_count++;
     }
     pclose(fp);
-    // Sort the filenames using a simple bubble sort
     for (int i = 0; i < file_count - 1; i++)
     {
         for (int j = 0; j < file_count - i - 1; j++)
@@ -177,6 +177,8 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     }
     return result;
 }
+
+
 void upload_handler(int client_socket, char *filename, char *dest_path)
 {
     char *ext = strrchr(filename, '.');
@@ -226,6 +228,8 @@ void upload_handler(int client_socket, char *filename, char *dest_path)
     }
 }
 
+//remove .txt files 
+// example: removef ~S1/foldertxt/1.txt
 void handle_remove(int client_socket, char *filepath)
 {
     // filepath is expected to be like "~S1/folder1/folder2/sample.txt"
@@ -245,49 +249,89 @@ void handle_remove(int client_socket, char *filepath)
     }
 }
 
-// New tar_handler for downltar command for text files
-void tar_handler(int client_socket, char *file_type)
+//tar download for txt 
+// example:  downltar .txt
+void downltar_txt_handler(int client_socket, char *buffer)
 {
-    if (strcmp(file_type, ".txt") == 0)
+    // buffer is expected as "downltar <filetype>"
+    char command[20], filetype[16];
+    sscanf(buffer, "%s %s", command, filetype);
+    
+    if (strcmp(filetype, ".txt") == 0)
     {
         char s3folder[512];
-        get_s3_folder_path(s3folder);
-        char tar_filename[128];
-        snprintf(tar_filename, sizeof(tar_filename), "text_%ld.tar", time(NULL));
+        get_s3_folder_path(s3folder);  // Use S3 folder
+        
+        // Check for .txt files in S3 folder.
+        char findCommand[1024];
+        snprintf(findCommand, sizeof(findCommand),
+                "find \"%s\" -type f -name '*.txt'", s3folder);
+        FILE *fp_find = popen(findCommand, "r");
+        if (fp_find == NULL)
+        {
+            printf("Error: Cannot execute find on S3 folder '%s'.\n", s3folder);
+            send(client_socket, "Error checking files", 21, 0);
+            return;
+        }
+        char line[256];
+        if (fgets(line, sizeof(line), fp_find) == NULL)
+        {
+            printf("Info: No .txt files found in '%s'. No tar archive created.\n", s3folder);
+            send(client_socket, "No files available for tar", 28, 0);
+            pclose(fp_find);
+            return;
+        }
+        pclose(fp_find);
+        
+        // Build the tar archive from S3 folder.
+        char tarFilename[128];
+        snprintf(tarFilename, sizeof(tarFilename), "text_%ld.tar", time(NULL));
         char tarCommand[1024];
-        // Create a tar archive (text.tar) of all .txt files in S3_folder.
-        snprintf(tarCommand, sizeof(tarCommand),
-                 "find %s -type f -name '*.txt' | tar -cf %s -T -", s3folder, tar_filename);
-        system(tarCommand);
-
-        // Open and send the tar archive
-        FILE *fp = fopen(tar_filename, "rb");
+        snprintf(tarCommand, sizeof(tarCommand),"find \"%s\" -type f -name '*.txt' | tar -cf %s -T -", s3folder, tarFilename);
+        if (system(tarCommand) != 0)
+        {
+            printf("Error: Tar creation for TXT files failed.\n");
+            send(client_socket, "Error creating tar file", 25, 0);
+            return;
+        }
+        
+        FILE *fp = fopen(tarFilename, "rb");
         if (fp == NULL)
         {
-            perror("Failed to open tar file");
+            printf("Error: Cannot open tar file '%s': %s\n", tarFilename, strerror(errno));
             send(client_socket, "Error creating tar file", 25, 0);
             return;
         }
         fseek(fp, 0, SEEK_END);
         int filesize = ftell(fp);
         rewind(fp);
-        send(client_socket, &filesize, sizeof(int), 0);
-        usleep(100000);
-        char buffer[BUFFER_SIZE];
+        if (send(client_socket, &filesize, sizeof(int), 0) < 0)
+            printf("Error: Failed to send tar file size.\n");
+        
+        char filebuffer[BUFFER_SIZE];
         int bytes;
-        while ((bytes = fread(buffer, 1, BUFFER_SIZE, fp)) > 0)
+        while ((bytes = fread(filebuffer, 1, BUFFER_SIZE, fp)) > 0)
         {
-            send(client_socket, buffer, bytes, 0);
+            if (send(client_socket, filebuffer, bytes, 0) < bytes)
+            {
+                printf("Error: Incomplete sending of tar file '%s'.\n", tarFilename);
+                fclose(fp);
+                remove(tarFilename);
+                return;
+            }
         }
         fclose(fp);
-        remove(tar_filename);
-        printf("Tar file text.tar sent successfully from S3.\n");
+        remove(tarFilename);
+        printf("Tar file for TXT files sent successfully.\n");
     }
     else
     {
-        send(client_socket, "Unsupported file type for downltar", 35, 0);
+        printf("Error: Unsupported file type '%s' for downltar on TXT server.\n", filetype);
+        send(client_socket, "Unsupported file type for tar", 29, 0);
     }
+
 }
+
 
 void download_request_forwader(int sock, char buffer[], int client_socket, char *servername)
 {
@@ -300,6 +344,9 @@ void download_request_forwader(int sock, char buffer[], int client_socket, char 
     close(sock);
     send(client_socket, response, strlen(response), 0);
 }
+
+//download txt files from server and give to client
+//example: downlf ~S1/foldertxt/1.txt
 void download_handler(int client_socket, char buffer[])
 {
     char command[20], file_path[512];
@@ -322,7 +369,7 @@ void download_handler(int client_socket, char buffer[])
 
     if (strcmp(ext, ".txt") == 0)
     {
-        // For .c files stored locally
+        // For .txt files stored locally
         FILE *fp = fopen(resolved_path, "rb");
         if (fp == NULL)
         {
@@ -359,6 +406,8 @@ void download_handler(int client_socket, char buffer[])
     }
 }
 
+//display filenames 
+//example: dispfnames ~S1/folder
 void diplay_filename_handler(int client_socket, char buffer[])
 {
 
@@ -400,6 +449,8 @@ void diplay_filename_handler(int client_socket, char buffer[])
     // printf("\n\n%sn\n", resolved_path);
     send(client_socket, file_list, strlen(file_list), 0);
 }
+
+// Process client commands
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -437,44 +488,7 @@ void prcclient(int client_socket)
         // Inside S3.c prcclient(), add after processing other commands:
         else if (strcmp(command, "downltar") == 0)
         {
-            // Expect command format: downltar .txt
-            char filetype[16];
-            sscanf(buffer, "%s %s", command, filetype);
-            if (strcmp(filetype, ".txt") == 0)
-            {
-                // Create tar archive for text files in S3_folder:
-                char s3folder[512];
-                get_s3_folder_path(s3folder);
-                char tarCommand[1024];
-                snprintf(tarCommand, sizeof(tarCommand),
-                         "find %s -type f -name '*.txt' | tar -cf text.tar -T -", s3folder);
-                system(tarCommand);
-                // Open and send text.tar to the client:
-                FILE *fp = fopen("text.tar", "rb");
-                if (fp == NULL)
-                {
-                    perror("Failed to open text.tar");
-                    send(client_socket, "Error creating tar file", 25, 0);
-                    continue;
-                }
-                fseek(fp, 0, SEEK_END);
-                int filesize = ftell(fp);
-                rewind(fp);
-                send(client_socket, &filesize, sizeof(int), 0);
-                char bufferTar[BUFFER_SIZE];
-                int bytes;
-                while ((bytes = fread(bufferTar, 1, BUFFER_SIZE, fp)) > 0)
-                {
-                    send(client_socket, bufferTar, bytes, 0);
-                }
-                fclose(fp);
-                remove("text.tar");
-                printf("Tar file text.tar sent successfully from S3.\n");
-            }
-            else
-            {
-                send(client_socket, "Unsupported file type for downltar", 35, 0);
-            }
+            downltar_txt_handler(client_socket, buffer);
         }
         else if (strcmp(command, "dispfnames") == 0)
         {

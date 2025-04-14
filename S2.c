@@ -1,3 +1,5 @@
+// S3.c - Handles pdf file (.pdf) operations on port 7778.
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,8 +16,10 @@
 // #define PORT 8001
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
-#define SERVER_PORT_2 8002
+#define SERVER_PORT_2 7778
 
+
+// this function creates a directory path recursively if not already present.
 void create_path_if_not_exist(const char *path)
 {
     char temp[512];
@@ -30,6 +34,8 @@ void create_path_if_not_exist(const char *path)
     }
     mkdir(temp, 0777); // Create final directory
 }
+
+// this Sets the S2 base folder path usually under the HOME directory eg. home/patel4xa/S2
 void get_s2_folder_path(char *base_path)
 {
     const char *home_dir = getenv("HOME");
@@ -46,6 +52,7 @@ void get_s2_folder_path(char *base_path)
     }
 }
 
+// Replace ~S1/ with the actual S2 base folder path.
 void sanitize_path(char *resolved_path, const char *raw_path, const char *base_dir)
 {
     if (strncmp(raw_path, "~S1/", 4) == 0)
@@ -57,6 +64,8 @@ void sanitize_path(char *resolved_path, const char *raw_path, const char *base_d
         snprintf(resolved_path, 512, "%s", raw_path);
     }
 }
+
+// check whether path exist return 2 for direcotory, return 1 for file, otherwise 0
 int check_path_exists(const char *path)
 {
     struct stat path_stat;
@@ -73,6 +82,7 @@ int check_path_exists(const char *path)
     return 1;
 }
 
+// List and sort all files in a directory
 char *list_all_files(const char *path, const char *extension, char *result, size_t result_size)
 {
     char command[1024];
@@ -85,27 +95,20 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         return NULL;
     }
 
-    // Check if directory exists
+    // Check if directory exists or not
     struct stat st;
     if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
     {
         return NULL;
     }
 
-    // Build the find command
-    if (extension != NULL)
-    {
-        // Filter by extension
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f -name \"*%s\"",
-                 path, extension);
+    if (extension != NULL){
+        snprintf(command, sizeof(command),"find \"%s\" -type f -name \"*%s\"",path, extension);
     }
     else
     {
         // All files
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f",
-                 path);
+        snprintf(command, sizeof(command),"find \"%s\" -type f",path);
     }
     // Execute the command
     FILE *fp = popen(command, "r");
@@ -114,7 +117,7 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         perror("popen failed");
         return NULL;
     }
-    // Store all filenames in an array for sorting
+    // Storing name for sorting
     char filenames[1000][256]; // Support up to 1000 files
     int file_count = 0;
     char line[1024];
@@ -140,6 +143,7 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         file_count++;
     }
     pclose(fp);
+
     // Sort the filenames using a simple bubble sort
     for (int i = 0; i < file_count - 1; i++)
     {
@@ -174,6 +178,8 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     }
     return result;
 }
+
+// Handle file upload & its only accepts PDF files and stores them in S2.
 void upload_handler(int client_socket, char *filename, char *dest_path)
 {
     char *ext = strrchr(filename, '.');
@@ -222,6 +228,8 @@ void upload_handler(int client_socket, char *filename, char *dest_path)
     }
 }
 
+
+// Handle file removal
 void handle_remove(int client_socket, char *filepath)
 {
     // filepath should be like "~S1/folder1/folder2/sample.pdf"
@@ -240,6 +248,7 @@ void handle_remove(int client_socket, char *filepath)
         send(client_socket, "Error removing file from S2", 28, 0);
     }
 }
+
 void download_request_forwader(int sock, char buffer[], int client_socket, char *servername)
 {
 
@@ -251,6 +260,8 @@ void download_request_forwader(int sock, char buffer[], int client_socket, char 
     close(sock);
     send(client_socket, response, strlen(response), 0);
 }
+
+//download handler for downloding fucntion
 void download_handler(int client_socket, char buffer[])
 {
     char command[20], file_path[512];
@@ -307,6 +318,7 @@ void download_handler(int client_socket, char buffer[])
     }
 }
 
+//// Display file names in a directory
 void diplay_filename_handler(int client_socket, char buffer[])
 {
 
@@ -323,7 +335,7 @@ void diplay_filename_handler(int client_socket, char buffer[])
     char resolved_path[512];
     sanitize_path(resolved_path, file_path, base_path);
 
-    // printf("absolute path that is built   %s\n", resolved_path);
+    // printf("absolute path  %s\n", resolved_path);
     char file_list[4096] = {0};
     if (check_path_exists(resolved_path) == 2)
     {
@@ -351,6 +363,51 @@ void diplay_filename_handler(int client_socket, char buffer[])
     send(client_socket, file_list, strlen(file_list), 0);
 }
 
+//tar function download
+void downtar_pdf_fucntion(int client_socket, char buffer[])
+{
+    char command[20], filetype[16];
+    sscanf(buffer, "%s %s", command, filetype);
+
+    if (strcmp(filetype, ".pdf") == 0)
+    {
+        char s2folder[512];
+        get_s2_folder_path(s2folder);
+        char tarFilename[128];
+        snprintf(tarFilename, sizeof(tarFilename), "pdf_%ld.tar", time(NULL));
+        char tarCommand[1024];
+        snprintf(tarCommand, sizeof(tarCommand), "find \"%s\" -type f -name '*.pdf' | tar -cf %s -T -", s2folder, tarFilename);
+        system(tarCommand);
+        FILE *fp = fopen(tarFilename, "rb");
+        if (fp == NULL)
+        {
+            perror("Failed to open tar file");
+            send(client_socket, "Error creating tar file", 25, 0);
+            return;
+        }
+                        
+        fseek(fp, 0, SEEK_END);
+        int filesize = ftell(fp);
+        rewind(fp);
+        send(client_socket, &filesize, sizeof(int), 0);
+        char bufferTar[BUFFER_SIZE];
+        int bytes;
+        while ((bytes = fread(bufferTar, 1, BUFFER_SIZE, fp)) > 0)
+        {
+            send(client_socket, bufferTar, bytes, 0);
+        }
+        fclose(fp);
+        remove(tarFilename);
+        printf("Tar file %s sent successfully from S2.\n", tarFilename);
+    }
+    else
+    {
+        send(client_socket, "Unsupported file type for downltar", 35, 0);
+    }
+}
+
+
+// Process client commands
 void prcclient(int client_socket)
 {
     char buffer[BUFFER_SIZE];
@@ -368,7 +425,7 @@ void prcclient(int client_socket)
 
         sscanf(buffer, "%s %s %s", command, filename, path);
 
-        // Get dynamic S1 folder path
+        // get dynamic S1 folder path
         char base_path[512];
         get_s2_folder_path(base_path);
 
@@ -376,62 +433,32 @@ void prcclient(int client_socket)
         char dest_path[512];
         sanitize_path(dest_path, path, base_path);
 
+        //upload
         if (strcmp(command, "uploadf") == 0)
         {
             upload_handler(client_socket, filename, dest_path);
         }
+
+        // Download a file from the server
         else if (strcmp(command, "downlf") == 0)
         {
             // printf("this is inside the download");
             download_handler(client_socket, buffer);
         }
+
+        //remove fun
         else if (strcmp(command, "removef") == 0)
         {
             handle_remove(client_socket, filename);
         }
-        // Inside S2.c prcclient(), after processing "uploadf" and "removef":
+
+        //download tar function
         else if (strcmp(command, "downltar") == 0)
         {
-            char filetype[16];
-            sscanf(buffer, "%s %s", command, filetype);
-
-            if (strcmp(filetype, ".pdf") == 0)
-            {
-                char s2folder[512];
-                get_s2_folder_path(s2folder);
-                char tarFilename[128];
-                snprintf(tarFilename, sizeof(tarFilename), "pdf_%ld.tar", time(NULL));
-                char tarCommand[1024];
-                snprintf(tarCommand, sizeof(tarCommand),
-                         "find \"%s\" -type f -name '*.pdf' | tar -cf %s -T -", s2folder, tarFilename);
-                system(tarCommand);
-                FILE *fp = fopen(tarFilename, "rb");
-                if (fp == NULL)
-                {
-                    perror("Failed to open tar file");
-                    send(client_socket, "Error creating tar file", 25, 0);
-                    continue;
-                }
-                fseek(fp, 0, SEEK_END);
-                int filesize = ftell(fp);
-                rewind(fp);
-                send(client_socket, &filesize, sizeof(int), 0);
-                char bufferTar[BUFFER_SIZE];
-                int bytes;
-                while ((bytes = fread(bufferTar, 1, BUFFER_SIZE, fp)) > 0)
-                {
-                    send(client_socket, bufferTar, bytes, 0);
-                }
-                fclose(fp);
-                remove(tarFilename);
-                printf("Tar file %s sent successfully from S2.\n", tarFilename);
-            }
-            else
-            {
-                send(client_socket, "Unsupported file type for downltar", 35, 0);
-            }
+            downtar_pdf_fucntion(client_socket,buffer);
         }
 
+        //display names
         else if (strcmp(command, "dispfnames") == 0)
         {
             printf("inside the display\n");

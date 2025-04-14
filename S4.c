@@ -1,3 +1,5 @@
+// S4.c - Handles ZIP file uploads and downloads on port 7780.
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,11 +12,12 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define SERVER_PORT 8004 // S4 listens on port 8004
+#define SERVER_PORT 7780 // S4 listens on port 8004
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 
-// Create directories recursively if they do not exist.
+
+// this function creates a directory path recursively if not already present.
 void create_path_if_not_exist(const char *path)
 {
     char temp[512];
@@ -30,6 +33,7 @@ void create_path_if_not_exist(const char *path)
     mkdir(temp, 0777);
 }
 
+// this Sets the S2 base folder path usually under the HOME directory eg. home/shah9c2/S4
 void get_s4_folder_path(char *base_path)
 {
     const char *home_dir = getenv("HOME");
@@ -46,6 +50,7 @@ void get_s4_folder_path(char *base_path)
     }
 }
 
+// Replace ~S1/ with the actual S4 base folder path.
 void sanitize_path(char *resolved_path, const char *raw_path, const char *base_dir)
 {
     // Strip "~S1/" if present; S1 sends the destination using ~S1/ prefix.
@@ -58,6 +63,8 @@ void sanitize_path(char *resolved_path, const char *raw_path, const char *base_d
         snprintf(resolved_path, 512, "%s", raw_path);
     }
 }
+
+// check whether path exist return 2 for direcotory, return 1 for file, otherwise 0
 int check_path_exists(const char *path)
 {
     struct stat path_stat;
@@ -74,6 +81,7 @@ int check_path_exists(const char *path)
     return 1;
 }
 
+// List and sort all files in a directory
 char *list_all_files(const char *path, const char *extension, char *result, size_t result_size)
 {
     char command[1024];
@@ -97,16 +105,12 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     if (extension != NULL)
     {
         // Filter by extension
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f -name \"*%s\"",
-                 path, extension);
+        snprintf(command, sizeof(command),"find \"%s\" -type f -name \"*%s\"",path, extension);
     }
     else
     {
         // All files
-        snprintf(command, sizeof(command),
-                 "find \"%s\" -type f",
-                 path);
+        snprintf(command, sizeof(command),"find \"%s\" -type f",path);
     }
     // Execute the command
     FILE *fp = popen(command, "r");
@@ -115,18 +119,16 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         perror("popen failed");
         return NULL;
     }
-    // Store all filenames in an array for sorting
-    char filenames[1000][256]; // Support up to 1000 files
+    // storing array in sortred oder
+    char filenames[1000][256]; 
     int file_count = 0;
     char line[1024];
-    // Read each line and extract the filename
+    // read each and get names
     while (fgets(line, sizeof(line), fp) != NULL && file_count < 1000)
     {
-        // Remove newline character
         line[strcspn(line, "\n")] = 0;
 
-        // Extract just the filename (not the full path)
-        const char *filename = strrchr(line, '/');
+        const char *filename = strrchr(line, '/'); //extract names from full path 
         if (filename)
         {
             filename++; // Skip the '/'
