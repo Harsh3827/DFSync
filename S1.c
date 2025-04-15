@@ -1,6 +1,5 @@
 // S1.c - Main server that routes client requests based on file extensions. Listens on port 7777.
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +19,6 @@
 #define SERVER_PORT_2 7778
 #define SERVER_PORT_3 7779
 #define SERVER_PORT_4 7780
-
 
 // Establishes connection to another server (S2, S3, S4) based on provided port
 int connect_to_server(int SERVER_PORT)
@@ -82,7 +80,7 @@ void get_s1_folder_path(char *base_path)
     }
 }
 
-// check whether path exist return 2 for direcotory, return 1 for file, otherwise 0 
+// check whether path exist return 2 for direcotory, return 1 for file, otherwise 0
 int check_path_exists(const char *path)
 {
     struct stat path_stat;
@@ -98,7 +96,6 @@ int check_path_exists(const char *path)
     }
     return 1;
 }
-
 
 // Lists all files from a given directory filtered by file extension, results sorted alphabetically
 char *list_all_files(const char *path, const char *extension, char *result, size_t result_size)
@@ -124,12 +121,12 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     if (extension != NULL)
     {
         // Filter by extension
-        snprintf(command, sizeof(command),"find \"%s\" -type f -name \"*%s\"", path, extension);
+        snprintf(command, sizeof(command), "find \"%s\" -type f -name \"*%s\"", path, extension);
     }
     else
     {
         // All files
-        snprintf(command, sizeof(command),"find \"%s\" -type f",path);
+        snprintf(command, sizeof(command), "find \"%s\" -type f", path);
     }
     // Execute the command
     FILE *fp = popen(command, "r");
@@ -146,8 +143,8 @@ char *list_all_files(const char *path, const char *extension, char *result, size
     while (fgets(line, sizeof(line), fp) != NULL && file_count < 1000)
     {
         line[strcspn(line, "\n")] = 0;
-       
-        const char *filename = strrchr(line, '/');  // Extract just the filename (not the full path)
+
+        const char *filename = strrchr(line, '/'); // Extract just the filename (not the full path)
         if (filename)
         {
             filename++; // Skip the '/'
@@ -162,7 +159,7 @@ char *list_all_files(const char *path, const char *extension, char *result, size
         file_count++;
     }
     pclose(fp);
-    // Sort the filenames 
+    // Sort the filenames
     for (int i = 0; i < file_count - 1; i++)
     {
         for (int j = 0; j < file_count - i - 1; j++)
@@ -300,6 +297,7 @@ void upload_handler(int client_socket, char *filename, char *dest_path, char com
 
         fclose(fp);
         printf("File saved to %s\n", full_path);
+        send(client_socket, "File uploaded successfully", 26, 0);
     }
     else if (strcmp(ext, ".pdf") == 0)
     {
@@ -344,19 +342,19 @@ void upload_handler(int client_socket, char *filename, char *dest_path, char com
 // Forwards file download requests to the appropriate server and sends file to client
 void download_request_forwader(int server_socket, char buffer[], int client_socket, char *servername)
 {
-
     send(server_socket, buffer, strlen(buffer), 0);
-    char response[BUFFER_SIZE];
-    memset(response, 0, BUFFER_SIZE);
 
+    // Receive file size from the server
     int filesize;
     recv(server_socket, &filesize, sizeof(int), 0);
     printf("Receiving file: %s (%d bytes)\n", " ", filesize);
-    // Send file size
+
+    // Send file size to client
     send(client_socket, &filesize, sizeof(int), 0);
     usleep(100000);
 
-    char input_buffer[filesize];
+    // Receive and forward the entire file
+    char input_buffer[BUFFER_SIZE]; // Change to use BUFFER_SIZE, not filesize
     int bytes_received, total_received = 0;
 
     while (total_received < filesize)
@@ -364,26 +362,23 @@ void download_request_forwader(int server_socket, char buffer[], int client_sock
         bytes_received = recv(server_socket, input_buffer, BUFFER_SIZE, 0);
         if (bytes_received <= 0)
         {
-            printf("Error receiving file from W25client\n");
-            close(server_socket);
-            return;
+            printf("Error receiving file from server\n");
+            break;
         }
 
-        // Forward data to specific server
+        // Forward data to client
         int sent = send(client_socket, input_buffer, bytes_received, 0);
         if (sent < bytes_received)
         {
-            printf("Error forwarding data to %s\n", servername);
-            close(server_socket);
-            return;
+            printf("Error forwarding data to client\n");
+            break;
         }
 
         total_received += bytes_received;
     }
 
-    printf("%s response: %s\n", servername, response);
+    // Don't wait for an additional response after file transfer
     close(server_socket);
-    send(client_socket, response, strlen(response), 0);
 }
 
 /* OPTION 3 - Download file feature ----------------------------------------------------------------*/
@@ -627,15 +622,14 @@ void get_fnames_from_other_servers(char *all_file_name, size_t buffer_size, char
         perror("recv failed");
         if (buffer_size > 0)
         {
-            all_file_name[0] = '\0'; 
+            all_file_name[0] = '\0';
         }
         printf("Failed to receive data from server %d\n", socket);
     }
     close(sock);
 }
 
-
-//this will aggregates and sends all complete file listing from all servers
+// this will aggregates and sends all complete file listing from all servers
 void diplay_filename_handler(int client_socket, char buffer[])
 {
 

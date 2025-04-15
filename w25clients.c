@@ -368,7 +368,18 @@ void upload_file(int sock, const char *file_name, const char *destination_path)
 
     fclose(fp);
     memset(filebuffer, 0, sizeof(filebuffer));
-    printf("File '%s' uploaded successfully.\n", file_name);
+
+    char confirmation_buffer[BUFFER_SIZE];
+    memset(confirmation_buffer, 0, BUFFER_SIZE);
+    if (recv(sock, confirmation_buffer, sizeof(confirmation_buffer) - 1, 0) <= 0)
+    {
+        perror("Error receiving confirmation from server after upload");
+    }
+    else
+    {
+        printf("Server confirmation: %s\n", confirmation_buffer);
+        printf("File '%s' uploaded successfully.\n", file_name);
+    }
 }
 
 // this function send the file path of which it want to server and then server read that file and in return
