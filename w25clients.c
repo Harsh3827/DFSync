@@ -526,7 +526,7 @@ int main()
             }
             else
             {
-                perror("Error receiving file list");
+                perror("Path does not exist or contains no files");
             }
         }
         else if (strcmp(command, "exit") == 0)
