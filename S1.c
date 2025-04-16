@@ -518,28 +518,72 @@ void downltar_handler(int client_socket, char *buffer)
     // buffer is of the form "downltar <filetype>"
     char command[20], filetype[16];
     sscanf(buffer, "%s %s", command, filetype);
+    
     if (strcmp(filetype, ".c") == 0)
     {
         char s1folder[512];
         get_s1_folder_path(s1folder);
+        
+        // First check if any .c files exist
+        char check_command[1024];
+        snprintf(check_command, sizeof(check_command), "find \"%s\" -type f -name '*.c' | wc -l", s1folder);
+        FILE *check_fp = popen(check_command, "r");
+        if (check_fp == NULL) {
+            send(client_socket, "Error checking for .c files", 26, 0);
+            return;
+        }
+        
+        char count_str[16];
+        fgets(count_str, sizeof(count_str), check_fp);
+        pclose(check_fp);
+        
+        int file_count = atoi(count_str);
+        if (file_count == 0) {
+            // Send 0 as filesize first
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            // Then send the error message
+            send(client_socket, "No .c files found to create tar archive", 36, 0);
+            return;
+        }
+
         // Generate a unique tar filename by appending the current timestamp.
         char tarFilename[128];
         snprintf(tarFilename, sizeof(tarFilename), "cfiles_%ld.tar", time(NULL));
         char tarCommand[1024];
         snprintf(tarCommand, sizeof(tarCommand),
                  "find \"%s\" -type f -name '*.c' | tar -cf %s -T -", s1folder, tarFilename);
-        system(tarCommand);
+        
+        if (system(tarCommand) != 0) {
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            send(client_socket, "Error creating tar file", 22, 0);
+            return;
+        }
+        
         // Open and send the tar file to the client.
         FILE *fp = fopen(tarFilename, "rb");
         if (fp == NULL)
         {
-            perror("Failed to open tar file");
-            send(client_socket, "Error creating tar file", 25, 0);
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            send(client_socket, "Error creating tar file", 22, 0);
             return;
         }
+        
         fseek(fp, 0, SEEK_END);
         int filesize = ftell(fp);
         rewind(fp);
+        
+        if (filesize == 0) {
+            fclose(fp);
+            remove(tarFilename);
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            send(client_socket, "No files found to create tar archive", 34, 0);
+            return;
+        }
+        
         send(client_socket, &filesize, sizeof(int), 0);
         char filebuffer[BUFFER_SIZE];
         int bytes;
@@ -554,9 +598,24 @@ void downltar_handler(int client_socket, char *buffer)
     else if (strcmp(filetype, ".pdf") == 0)
     {
         int sock = connect_to_server(SERVER_PORT_2);
+        if (sock < 0) {
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            send(client_socket, "Error connecting to PDF server", 29, 0);
+            return;
+        }
         send(sock, buffer, strlen(buffer), 0);
         int filesize;
         recv(sock, &filesize, sizeof(int), 0);
+        
+        if (filesize <= 0) {
+            close(sock);
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            send(client_socket, "No PDF files found to create tar archive", 37, 0);
+            return;
+        }
+        
         send(client_socket, &filesize, sizeof(int), 0);
         char filebuffer[BUFFER_SIZE];
         int bytes, totalReceived = 0;
@@ -574,9 +633,24 @@ void downltar_handler(int client_socket, char *buffer)
     else if (strcmp(filetype, ".txt") == 0)
     {
         int sock = connect_to_server(SERVER_PORT_3);
+        if (sock < 0) {
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            send(client_socket, "Error connecting to TXT server", 29, 0);
+            return;
+        }
         send(sock, buffer, strlen(buffer), 0);
         int filesize;
         recv(sock, &filesize, sizeof(int), 0);
+        
+        if (filesize <= 0) {
+            close(sock);
+            int zero_size = 0;
+            send(client_socket, &zero_size, sizeof(int), 0);
+            send(client_socket, "No TXT files found to create tar archive", 37, 0);
+            return;
+        }
+        
         send(client_socket, &filesize, sizeof(int), 0);
         char filebuffer[BUFFER_SIZE];
         int bytes, totalReceived = 0;
@@ -593,7 +667,9 @@ void downltar_handler(int client_socket, char *buffer)
     }
     else
     {
-        send(client_socket, "Unsupported file type for downltar", 35, 0);
+        int zero_size = 0;
+        send(client_socket, &zero_size, sizeof(int), 0);
+        send(client_socket, "Unsupported file type for downltar", 33, 0);
     }
 }
 
@@ -632,7 +708,6 @@ void get_fnames_from_other_servers(char *all_file_name, size_t buffer_size, char
 // this will aggregates and sends all complete file listing from all servers
 void diplay_filename_handler(int client_socket, char buffer[])
 {
-
     char original_buffer_copy[BUFFER_SIZE];
     strncpy(original_buffer_copy, buffer, BUFFER_SIZE - 1);
     original_buffer_copy[BUFFER_SIZE - 1] = '\0';
@@ -640,7 +715,8 @@ void diplay_filename_handler(int client_socket, char buffer[])
     char pdf_files[BUFFER_SIZE * 5] = {0};
     char txt_files[BUFFER_SIZE * 5] = {0};
     char zip_files[BUFFER_SIZE * 5] = {0};
-    // void get_fnames_from_other_servers(char *file_name, char buffer[], int socket, char *all_files);
+    
+    // Get files from all servers
     get_fnames_from_other_servers(pdf_files, sizeof(pdf_files), original_buffer_copy, SERVER_PORT_2);
     get_fnames_from_other_servers(txt_files, sizeof(txt_files), original_buffer_copy, SERVER_PORT_3);
     get_fnames_from_other_servers(zip_files, sizeof(zip_files), original_buffer_copy, SERVER_PORT_4);
@@ -658,29 +734,25 @@ void diplay_filename_handler(int client_socket, char buffer[])
     char resolved_path[512];
     sanitize_path(resolved_path, file_path, base_path);
 
-    // printf("Removed file %s\n", resolved_path);
     char file_list[BUFFER_SIZE * 5] = {0};
     if (check_path_exists(resolved_path) == 2)
     {
-
-        // printf("the path is valid and so inside the conditions\n\n");
         if (list_all_files(resolved_path, NULL, file_list, sizeof(file_list)) != NULL)
         {
             printf("All files:\n%s\n", file_list);
         }
-        else
-        {
-            printf("Error listing files in %s\n", resolved_path);
-        }
     }
 
-    char result[BUFFER_SIZE * 20] = "Files:\n";
+    char result[BUFFER_SIZE * 20] = "Files in directory:\n";
     memset(result + strlen(result), 0, sizeof(result) - strlen(result));
+
+    int has_files = 0;
 
     // Add C files if any
     if (strlen(file_list) > 0)
     {
         strcat(result, file_list);
+        has_files = 1;
     }
 
     // Add PDF files if any
@@ -689,6 +761,7 @@ void diplay_filename_handler(int client_socket, char buffer[])
         strcmp(pdf_files, "Error listing files in the specified directory.") != 0)
     {
         strcat(result, pdf_files);
+        has_files = 1;
     }
 
     // Add TXT files if any
@@ -697,6 +770,7 @@ void diplay_filename_handler(int client_socket, char buffer[])
         strcmp(txt_files, "Error listing files in the specified directory.") != 0)
     {
         strcat(result, txt_files);
+        has_files = 1;
     }
 
     // Add ZIP files if any
@@ -705,8 +779,12 @@ void diplay_filename_handler(int client_socket, char buffer[])
         strcmp(zip_files, "Error listing files in the specified directory.") != 0)
     {
         strcat(result, zip_files);
+        has_files = 1;
     }
-    result[BUFFER_SIZE * 20 - 1] = '\0';
+
+    if (!has_files) {
+        strcpy(result, "No files found in the specified directory.\n");
+    }
 
     // Send the combined result to the client
     send(client_socket, result, strlen(result), 0);

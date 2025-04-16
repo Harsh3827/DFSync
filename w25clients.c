@@ -281,10 +281,16 @@ void download_tar(int sock, char *file_type)
         return;
     }
 
-    // Check if there are no files available, or an error was reported.
-    if (filesize <= 0)
+    // If filesize is 0, there are no files or an error occurred
+    if (filesize == 0)
     {
-        printf("No files available for tar archive.\n");
+        char error_msg[BUFFER_SIZE];
+        memset(error_msg, 0, BUFFER_SIZE);
+        if (recv(sock, error_msg, BUFFER_SIZE - 1, 0) > 0) {
+            printf("%s\n", error_msg);
+        } else {
+            printf("No files available for tar archive.\n");
+        }
         return;
     }
 
@@ -505,27 +511,22 @@ int main()
 
             send(sock, command, strlen(command), 0);
             memset(command, 0, sizeof(command));
-            char answer[2343];
+            char answer[BUFFER_SIZE * 5];
             memset(answer, 0, sizeof(answer));
-            ssize_t bytes_received = recv(sock, answer, sizeof(answer) - 1, 0); // Leave space for null term
+            ssize_t bytes_received = recv(sock, answer, sizeof(answer) - 1, 0);
 
             if (bytes_received >= 0)
             {
                 answer[bytes_received] = '\0';
+                if (strlen(answer) == 0) {
+                    printf("No files found in the specified directory.\n");
+                } else {
+                    printf("%s\n", answer);
+                }
             }
             else
             {
-                perror("recv failed");
-                answer[0] = '\0';
-            }
-            // Check if server sent empty response
-            if (strlen(answer) == 0 && bytes_received >= 0)
-            {
-                printf("Path does not exist or contains no files.\n");
-            }
-            else if (bytes_received > 0)
-            {
-                printf("%s\n", answer);
+                perror("Error receiving file list");
             }
         }
         else if (strcmp(command, "exit") == 0)

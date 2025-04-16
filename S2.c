@@ -240,7 +240,7 @@ void handle_remove(int client_socket, char *filepath)
     if (remove(resolved_path) == 0)
     {
         printf("Removed file %s\n", resolved_path);
-        send(client_socket, "File removed from S2 successfully", 33, 0);
+        send(client_socket, "File removed successfully", 33, 0);
     }
     else
     {
